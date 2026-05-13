@@ -1,0 +1,54 @@
+{
+  "name": "aiklao-bot",
+  "version": "0.1.3",
+  "description": "LINE bot + LIFF map + destination picker (PostgreSQL + Docker)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "check": "node scripts/check-db.js",
+    "richmenu:build": "node scripts/build-richmenu.js",
+    "richmenu:setup": "node scripts/setup-richmenu.js",
+    "richmenu:teardown": "node scripts/teardown-richmenu.js",
+    "migrate:from-sqlite": "node scripts/migrate-from-sqlite.js",
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "line",
+    "bot",
+    "liff",
+    "trip-tracker"
+  ],
+  "author": "Jod",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@line/bot-sdk": "^11.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "node-cron": "^3.0.3",
+    "pg": "^8.13.1",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "sharp": "^0.33.5"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.9.0"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.env
+.env.*
+!.env.example
+.dockerignore
+*.log
+app.db*
+.DS_Store
+.vscode
+.idea
+test
+__tests__
+coverage
+.claude

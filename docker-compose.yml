@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aiklao
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aiklao_dev_change_me}
+      POSTGRES_DB: aiklao
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiklao -d aiklao"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://aiklao:${POSTGRES_PASSWORD:-aiklao_dev_change_me}@postgres:5432/aiklao
+      NODE_ENV: production
+      PORT: 3001
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TIMEZONE: ${TIMEZONE:-Asia/Bangkok}
+      MONTHLY_PUSH_LIMIT: ${MONTHLY_PUSH_LIMIT:-200}
+      SCHEDULER_TICK: ${SCHEDULER_TICK:-*/5 * * * *}
+      CHANNEL_SECRET: ${CHANNEL_SECRET}
+      CHANNEL_ACCESS_TOKEN: ${CHANNEL_ACCESS_TOKEN}
+      LIFF_ID: ${LIFF_ID}
+      LIFF_URL: ${LIFF_URL}
+      LINE_LOGIN_CHANNEL_ID: ${LINE_LOGIN_CHANNEL_ID}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+    ports:
+      - "${APP_PORT:-3001}:3001"
+
+volumes:
+  postgres-data:

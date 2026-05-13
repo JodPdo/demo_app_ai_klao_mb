@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>AiKlao LIFF Debug</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 12px;
+      font-family: -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif;
+      font-size: 14px; line-height: 1.5;
+      background: #0f172a; color: #e2e8f0;
+      min-height: 100vh;
+    }
+    h1 { font-size: 18px; margin: 0 0 12px; color: #06C755; }
+    .step {
+      background: #1e293b; border-left: 4px solid #475569;
+      padding: 10px 12px; margin-bottom: 8px; border-radius: 6px;
+      word-break: break-word; white-space: pre-wrap;
+    }
+    .step.ok { border-left-color: #10b981; }
+    .step.fail { border-left-color: #ef4444; background: #2a1518; }
+    .step.run { border-left-color: #f59e0b; }
+    .step b { display: block; margin-bottom: 4px; }
+    .step .detail { font-family: ui-monospace, monospace; font-size: 12px; color: #94a3b8; }
+    .step .err { color: #fca5a5; }
+    button {
+      background: #06C755; color: white; border: 0; padding: 12px 20px;
+      border-radius: 8px; font-size: 16px; font-weight: bold;
+      width: 100%; margin-top: 16px; cursor: pointer;
+    }
+    .meta { font-size: 11px; color: #64748b; margin-bottom: 12px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>🩺 AiKlao LIFF Debug</h1>
+  <div class="meta" id="meta"></div>
+  <div id="log"></div>
+  <button id="rerun">▶︎ รัน check ใหม่ทั้งหมด</button>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    onerror="window.__leafletFailed=true"></script>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"
+    onerror="window.__liffSdkFailed=true"></script>
+
+  <script>
+    const $log = document.getElementById("log");
+    const $meta = document.getElementById("meta");
+
+    function step(label) {
+      const el = document.createElement("div");
+      el.className = "step run";
+      el.innerHTML = `<b>⏳ ${label}</b><div class="detail">running...</div>`;
+      $log.appendChild(el);
+      return {
+        ok(detail = "") {
+          el.className = "step ok";
+          el.innerHTML = `<b>✅ ${label}</b>${detail ? `<div class="detail">${detail}</div>` : ""}`;
+        },
+        fail(detail = "") {
+          el.className = "step fail";
+          el.innerHTML = `<b>❌ ${label}</b><div class="detail err">${detail}</div>`;
+        },
+        warn(detail = "") {
+          el.className = "step run";
+          el.innerHTML = `<b>⚠️ ${label}</b><div class="detail">${detail}</div>`;
+        }
+      };
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // capture global errors
+    window.addEventListener("error", (e) => {
+      const s = step("Uncaught JS error");
+      s.fail(`${escapeHtml(e.message)}\n${escapeHtml(e.filename || "")}:${e.lineno || "?"}`);
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      const s = step("Unhandled promise rejection");
+      s.fail(escapeHtml(e.reason?.message || e.reason || "unknown"));
+    });
+
+    async function runChecks() {
+      $log.innerHTML = "";
+      $meta.textContent = `URL: ${location.href}\nUA: ${navigator.userAgent}`;
+
+      // 1) DOM + CSS
+      step("DOM + JS execution").ok("page rendered");
+
+      // 2) Leaflet
+      const sLeaf = step("Leaflet SDK loaded");
+      if (window.__leafletFailed) sLeaf.fail("script tag failed to load (network?)");
+      else if (typeof window.L === "undefined") sLeaf.fail("window.L undefined");
+      else sLeaf.ok(`L.version = ${L.version}`);
+
+      // 3) LIFF SDK
+      const sLiff = step("LIFF SDK loaded");
+      if (window.__liffSdkFailed) sLiff.fail("script tag failed to load");
+      else if (typeof window.liff === "undefined") sLiff.fail("window.liff undefined");
+      else sLiff.ok("liff object available");
+
+      // 4) /api/config
+      const sCfg = step("GET /api/config (no auth required)");
+      let cfg = null;
+      try {
+        const res = await fetch("/api/config");
+        const text = await res.text();
+        if (!res.ok) {
+          sCfg.fail(`HTTP ${res.status}\n${escapeHtml(text.slice(0, 300))}`);
+        } else {
+          cfg = JSON.parse(text);
+          if (!cfg.liffId) sCfg.fail("liffId missing → server ENV LIFF_ID ไม่ได้ตั้ง");
+          else sCfg.ok(`liffId = ${cfg.liffId}\nrefreshSec = ${cfg.refreshIntervalSec}`);
+        }
+      } catch (e) { sCfg.fail(`fetch failed: ${escapeHtml(e.message)}`); }
+
+      if (!cfg?.liffId) {
+        step("(หยุดที่ขั้นนี้ — ตั้งค่า LIFF_ID ใน server แล้ว restart)").fail("no liffId");
+        return;
+      }
+
+      // 5) liff.init
+      const sInit = step("liff.init({ liffId })");
+      try {
+        if (!window.liff) throw new Error("LIFF SDK not loaded");
+        await liff.init({ liffId: cfg.liffId });
+        sInit.ok(`isInClient=${liff.isInClient()}, isLoggedIn=${liff.isLoggedIn()}, OS=${liff.getOS?.() || "?"}`);
+      } catch (e) {
+        sInit.fail(`${escapeHtml(e.message)}\n→ ตรวจ LIFF_ID หรือ Endpoint URL ที่ตั้งใน LINE Developers Console`);
+        return;
+      }
+
+      // 6) login state
+      const sLogin = step("LIFF login state");
+      if (!liff.isLoggedIn()) {
+        sLogin.warn("ยังไม่ login — ปกติ LIFF จะ redirect ไป login\nกดปุ่มด้านล่างเพื่อ login ตอนนี้");
+        const btn = document.createElement("button");
+        btn.textContent = "→ liff.login()";
+        btn.style.marginTop = "8px";
+        btn.onclick = () => liff.login({ redirectUri: location.href });
+        sLogin.warn("ยังไม่ login");
+        $log.appendChild(btn);
+        return;
+      }
+      sLogin.ok("logged in");
+
+      // 7) access token + /api/me
+      const sMe = step("GET /api/me (with access token)");
+      let token;
+      try {
+        token = liff.getAccessToken();
+        if (!token) throw new Error("getAccessToken returned null");
+      } catch (e) { sMe.fail(`getAccessToken: ${escapeHtml(e.message)}`); return; }
+
+      try {
+        const res = await fetch("/api/me", { headers: { Authorization: `Bearer ${token}` } });
+        const text = await res.text();
+        if (!res.ok) sMe.fail(`HTTP ${res.status}\n${escapeHtml(text.slice(0, 400))}`);
+        else {
+          const me = JSON.parse(text);
+          sMe.ok(`userId = ${me.user?.userId?.slice(0, 8)}...\ndisplayName = ${escapeHtml(me.user?.displayName || "?")}`);
+        }
+      } catch (e) { sMe.fail(`fetch failed: ${escapeHtml(e.message)}`); }
+
+      // 8) /api/me/trips
+      const sTrips = step("GET /api/me/trips");
+      let trips = [];
+      try {
+        const res = await fetch("/api/me/trips", { headers: { Authorization: `Bearer ${token}` } });
+        const text = await res.text();
+        if (!res.ok) sTrips.fail(`HTTP ${res.status}\n${escapeHtml(text.slice(0, 400))}`);
+        else {
+          const data = JSON.parse(text);
+          trips = data.trips || [];
+          sTrips.ok(`${trips.length} active trip(s)\n${trips.map(t => `#${t.id} ${t.name}`).join("\n")}`);
+        }
+      } catch (e) { sTrips.fail(`fetch failed: ${escapeHtml(e.message)}`); }
+
+      if (trips.length === 0) {
+        step("ไม่มี trip — เข้าจบแค่นี้").warn("เปิด LINE → group → พิมพ์ 'ดูแผนที่' เพื่อสร้าง/เปิดทริปก่อน");
+        return;
+      }
+
+      // 9) /api/trip/:id  ← น่าจะพังตรงนี้ถ้ายังไม่ได้รัน migration 005
+      const tripId = trips[0].id;
+      const sTrip = step(`GET /api/trip/${tripId} (← จุดที่น่าจะ fail)`);
+      try {
+        const res = await fetch(`/api/trip/${tripId}`, { headers: { Authorization: `Bearer ${token}` } });
+        const text = await res.text();
+        if (!res.ok) {
+          sTrip.fail(`HTTP ${res.status}\n${escapeHtml(text.slice(0, 600))}\n\n💡 ถ้า error ขึ้น "column does not exist" → ยังไม่ได้รัน migration 005_break.sql`);
+        } else {
+          const data = JSON.parse(text);
+          sTrip.ok(`trip "${escapeHtml(data.trip?.name || "?")}"\nmembers: ${data.members?.length || 0}\ndest: ${data.trip?.dest_lat ? "set" : "—"}`);
+        }
+      } catch (e) { sTrip.fail(`fetch failed: ${escapeHtml(e.message)}`); }
+
+      step("✅ ทุกขั้นตอนเสร็จ").ok("ถ้าทั้งหมดเขียวแล้วยังเปิดแผนที่ปกติไม่ขึ้น → ปัญหาอยู่ที่ render layer");
+    }
+
+    document.getElementById("rerun").addEventListener("click", runChecks);
+
+    // wait a sec for SDK scripts to load, then run
+    setTimeout(runChecks, 500);
+  </script>
+</body>
+</html>

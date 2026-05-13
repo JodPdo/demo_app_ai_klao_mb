@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#06C755" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>อ้ายคล้าว — Watch</title>
+  <link rel="icon" href="/favicon.ico" sizes="32x32" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="/watch/styles.css?v=40" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-row">
+      <div class="trip-meta">
+        <h1 id="tripName" class="trip-name">กำลังโหลด…</h1>
+        <p id="destName" class="dest-name"></p>
+      </div>
+      <span class="readonly-badge">👁 ดูเท่านั้น</span>
+    </div>
+    <div id="statsRow" class="stats" hidden>
+      <div class="stat"><span class="stat-icon">👥</span><span><b id="memberCount">0</b> คน</span></div>
+      <div class="stat"><span class="stat-icon">📍</span><span><b id="activeCount">0</b> ส่งแล้ว</span></div>
+      <div class="stat"><span class="stat-icon">✅</span><span><b id="arrivedCount">0</b> ถึงแล้ว</span></div>
+      <div class="stat live-stat" hidden id="liveStatBadge"><span class="stat-icon">🔴</span><span><b id="liveCount">0</b> Live</span></div>
+    </div>
+  </header>
+
+  <main id="map" aria-label="แผนที่ทริป"></main>
+
+  <section id="emptyState" class="empty-state" hidden>
+    <div class="empty-icon">🗺️</div>
+    <h2 id="emptyTitle">ยังไม่มีตำแหน่ง</h2>
+    <p id="emptyMsg">รอให้สมาชิกในทริปส่งตำแหน่ง</p>
+  </section>
+
+  <section id="sheet" class="sheet collapsed">
+    <button id="sheetHandle" class="sheet-handle" aria-label="ขยาย/ย่อรายการ">
+      <span class="handle-bar"></span>
+      <span class="handle-label">
+        <span>สมาชิก</span>
+        <span id="sheetCount" class="sheet-count">0</span>
+      </span>
+    </button>
+    <ul id="memberList" class="member-list"></ul>
+  </section>
+
+  <div id="errorOverlay" class="error-overlay" hidden>
+    <div class="error-icon">⚠️</div>
+    <h2 id="errorTitle">ไม่สามารถเปิดลิงก์ได้</h2>
+    <p id="errorMsg">ลิงก์ไม่ถูกต้อง / หมดอายุ / ถูกเพิกถอน</p>
+  </div>
+
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <p>กำลังโหลด…</p>
+  </div>
+
+  <footer class="footer">
+    <span class="footer-meta">
+      🔄 อัพเดตทุก <b id="refreshSec">30</b>s
+      <span class="footer-sep">·</span>
+      <span id="lastUpdate">—</span>
+    </span>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="/watch/app.js?v=40"></script>
+</body>
+</html>

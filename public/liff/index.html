@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#06C755" />
+  <title>อ้ายคล้าว — แผนที่ทริป</title>
+  <link rel="icon" href="/favicon.ico" sizes="32x32" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="./styles.css?v=36" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-row">
+      <button id="menuBtn" class="icon-btn" title="เปลี่ยนทริป" aria-label="เปลี่ยนทริป">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+      </button>
+      <div class="trip-meta">
+        <h1 id="tripName" class="trip-name">กำลังโหลด…</h1>
+        <p id="destName" class="dest-name"></p>
+      </div>
+      <span id="leaderBadge" class="leader-badge" hidden>👑</span>
+      <span id="refreshChip" class="refresh-chip" title="รีเฟรชอัตโนมัติ">↻ <b id="refreshTimer">—</b>s</span>
+      <button id="moreBtn" class="icon-btn" title="จัดการทริป" aria-label="จัดการทริป" hidden>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4m0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4m0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+      </button>
+    </div>
+    <div id="statsRow" class="stats" hidden>
+      <div class="stat"><span class="stat-icon">👥</span><span><b id="memberCount">0</b> คน</span></div>
+      <div class="stat"><span class="stat-icon">📍</span><span><b id="activeCount">0</b> ส่งแล้ว</span></div>
+      <div class="stat"><span class="stat-icon">✅</span><span><b id="arrivedCount">0</b> ถึงแล้ว</span></div>
+      <div class="stat break-stat" hidden id="breakStatBadge"><span class="stat-icon">☕</span><span><b id="breakCount">0</b> พัก</span></div>
+      <div class="stat live-stat" hidden id="liveStatBadge"><span class="stat-icon live-pulse">🔴</span><span><b id="liveCount">0</b> Live</span></div>
+    </div>
+  </header>
+
+  <div id="autoTrackBanner" class="auto-track-banner" hidden>
+    <div class="atb-content">
+      <span class="atb-icon">📱</span>
+      <div class="atb-text">
+        <div class="atb-title">กำลัง track ตำแหน่งให้</div>
+        <div class="atb-meta">อย่าปิดหน้านี้ — ส่งทุก 30 วินาที</div>
+      </div>
+      <button id="autoTrackStop" class="atb-btn">หยุด</button>
+    </div>
+  </div>
+
+  <div id="groupBreakBanner" class="group-break-banner" hidden>
+    <div class="gbb-content">
+      <span class="gbb-icon">👥☕</span>
+      <div class="gbb-text">
+        <div class="gbb-title">กลุ่มกำลังพัก</div>
+        <div class="gbb-meta" id="groupBreakMeta">— เหลือ — นาที</div>
+      </div>
+      <button id="groupBreakEndBtn" class="gbb-btn" hidden>ยกเลิก</button>
+    </div>
+  </div>
+
+  <main id="map" aria-label="แผนที่ทริป"></main>
+
+  <section id="emptyState" class="empty-state" hidden>
+    <div class="empty-icon">🗺️</div>
+    <h2 id="emptyTitle">ยังไม่มีตำแหน่ง</h2>
+    <p id="emptyMsg">รอให้สมาชิกในทริปกดส่ง 📍 ตำแหน่งใน LINE</p>
+  </section>
+
+  <section id="sheet" class="sheet collapsed" aria-label="รายชื่อสมาชิก">
+    <button id="sheetHandle" class="sheet-handle" aria-label="ขยาย/ย่อรายการ">
+      <span class="handle-bar"></span>
+      <span class="handle-label">
+        <span id="sheetTitle">สมาชิกทริป</span>
+        <span id="sheetCount" class="sheet-count">0</span>
+      </span>
+    </button>
+    <ul id="memberList" class="member-list"></ul>
+  </section>
+
+  <button id="sosBtn" class="fab fab-sos" title="ขอความช่วยเหลือ" aria-label="SOS"><span class="sos-text">SOS</span></button>
+
+  <div id="speedDial" class="speed-dial">
+    <div id="speedDialActions" class="speed-dial-actions" hidden>
+      <button class="dial-action dial-action-leader" data-action="group-break" aria-label="พักทั้งกลุ่ม" id="dialGroupBreak" hidden>
+        <span class="dial-label">พักทั้งกลุ่ม</span>
+        <span class="dial-icon dial-icon-break">👥</span>
+      </button>
+      <button class="dial-action" data-action="live-share" aria-label="แชร์สด" id="dialLiveShare">
+        <span class="dial-label" id="dialLiveLabel">แชร์สด 1ชม.</span>
+        <span class="dial-icon dial-icon-live">🔴</span>
+      </button>
+      <button class="dial-action" data-action="break" aria-label="พักรถ">
+        <span class="dial-label">พักรถ</span>
+        <span class="dial-icon dial-icon-break">☕</span>
+      </button>
+      <button class="dial-action" data-action="locate" aria-label="ดูทุกคน">
+        <span class="dial-label">ดูทุกคน</span>
+        <span class="dial-icon dial-icon-default">⊕</span>
+      </button>
+      <button class="dial-action" data-action="refresh" aria-label="รีเฟรชเดี๋ยวนี้">
+        <span class="dial-label">รีเฟรชเลย</span>
+        <span class="dial-icon dial-icon-default">↻</span>
+      </button>
+    </div>
+    <button id="dialToggle" class="fab fab-primary" title="เมนู" aria-label="เปิดเมนู">
+      <svg id="dialIcon" viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+    </button>
+  </div>
+  <div id="dialBackdrop" class="dial-backdrop" hidden></div>
+
+  <div id="tripModal" class="modal" hidden>
+    <div class="modal-content">
+      <h3>เลือกทริป</h3>
+      <ul id="tripList" class="trip-list"></ul>
+    </div>
+  </div>
+
+  <div id="moreSheet" class="modal" hidden>
+    <div class="modal-content">
+      <h3>จัดการทริป</h3>
+      <button class="menu-item" data-action="rename" id="renameMenuItem">
+        <span class="menu-item-icon">✏️</span>
+        <div class="menu-item-text">
+          <div class="menu-item-title">ตั้งชื่อทริป</div>
+          <div class="menu-item-sub" id="currentTripName">—</div>
+        </div>
+      </button>
+      <button class="menu-item" data-action="share">
+        <span class="menu-item-icon">🔗</span>
+        <div class="menu-item-text">
+          <div class="menu-item-title">สร้างลิงก์แชร์</div>
+          <div class="menu-item-sub">ให้ครอบครัวดูแบบ read-only</div>
+        </div>
+      </button>
+      <button class="menu-item" data-action="reset">
+        <span class="menu-item-icon">♻️</span>
+        <div class="menu-item-text">
+          <div class="menu-item-title">รีเซ็ตทริป</div>
+          <div class="menu-item-sub">ลบ location ทั้งหมด + เคลียร์ปลายทาง</div>
+        </div>
+      </button>
+      <button class="menu-item menu-item-danger" data-action="archive">
+        <span class="menu-item-icon">🗑️</span>
+        <div class="menu-item-text">
+          <div class="menu-item-title">ยกเลิกทริป</div>
+          <div class="menu-item-sub">Archive ทริปนี้</div>
+        </div>
+      </button>
+      <button class="menu-cancel" data-close>ปิด</button>
+    </div>
+  </div>
+
+  <div id="nameModal" class="modal" hidden>
+    <div class="modal-content modal-confirm">
+      <div style="font-size:36px;text-align:center">✏️</div>
+      <h3 style="text-align:center;margin:4px 0 12px">ตั้งชื่อทริป</h3>
+      <input id="nameInput" type="text" maxlength="50" placeholder="เช่น 'ขึ้นเหนือ มี.ค. 67'" class="name-input" />
+      <div id="nameHint" class="name-hint">1-50 ตัวอักษร</div>
+      <div class="confirm-actions" style="margin-top:12px">
+        <button id="nameCancel" class="btn-secondary">ยกเลิก</button>
+        <button id="nameSave" class="btn-primary">💾 บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- v4.0: Share token modal -->
+  <div id="shareModal" class="modal" hidden>
+    <div class="modal-content modal-share">
+      <div style="font-size:36px;text-align:center">🔗</div>
+      <h3 style="text-align:center;margin:4px 0 12px">ลิงก์แชร์</h3>
+
+      <div id="shareCreateSection">
+        <div class="share-section-label">ชื่อลิงก์ (เห็นเฉพาะคุณ):</div>
+        <input id="shareLabel" type="text" maxlength="30" placeholder="เช่น 'แม่' หรือ 'ลูกค้า A'" class="share-input" />
+
+        <div class="share-section-label" style="margin-top:10px">โหมดความเป็นส่วนตัว:</div>
+        <div class="share-privacy-row">
+          <button class="share-privacy selected" data-privacy="full">👤 ปกติ (ชื่อ+รูป)</button>
+          <button class="share-privacy" data-privacy="initial-only">🕶 ปิดบัง (initial only)</button>
+        </div>
+
+        <div class="share-section-label" style="margin-top:10px">หมดอายุ:</div>
+        <div class="share-expiry-row">
+          <button class="share-expiry selected" data-expiry="">ไม่หมด (จบเมื่อทริปจบ)</button>
+          <button class="share-expiry" data-expiry="24">24 ชม.</button>
+          <button class="share-expiry" data-expiry="168">7 วัน</button>
+        </div>
+
+        <button id="shareCreateBtn" class="btn-primary" style="width:100%;margin-top:14px">
+          ✨ สร้างลิงก์ใหม่
+        </button>
+      </div>
+
+      <div id="shareListSection" style="margin-top:14px">
+        <div class="share-section-label">ลิงก์ที่ใช้งานอยู่:</div>
+        <ul id="shareList" class="share-list"></ul>
+      </div>
+
+      <button id="shareClose" class="menu-cancel" style="margin-top:12px">ปิด</button>
+    </div>
+  </div>
+
+  <div id="sosModal" class="modal" hidden>
+    <div class="modal-content modal-confirm">
+      <div class="confirm-icon" style="font-size:64px">🆘</div>
+      <h3 style="color:#DC2626">ส่ง SOS ขอความช่วยเหลือ?</h3>
+      <p class="confirm-msg">จะส่งพิกัด<strong> ปัจจุบันของคุณ </strong>ไปยังทุกคนในกลุ่มทันที<br>ใช้เฉพาะกรณีฉุกเฉินจริง</p>
+      <div id="sosLocStatus" class="sos-loc-status">📍 กำลังหาพิกัด...</div>
+      <div class="confirm-actions">
+        <button id="sosCancel" class="btn-secondary">ยกเลิก</button>
+        <button id="sosConfirm" class="btn-danger" disabled>🆘 ส่ง SOS</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="breakModal" class="modal" hidden>
+    <div class="modal-content modal-break">
+      <div style="text-align:center;margin-bottom:14px">
+        <div style="font-size:36px">☕</div>
+        <h3 id="breakModalTitle" style="margin:4px 0 0">ตั้งพักรถ</h3>
+      </div>
+      <div id="breakActiveSection" hidden>
+        <div class="break-active-info">
+          <div id="breakActiveCountdown" class="break-countdown">เหลืออีก — นาที</div>
+          <div id="breakActiveReason" class="break-reason-label">😴 พักผ่อน</div>
+        </div>
+        <div class="break-extend-row">
+          <button class="break-extend-btn" data-extend="15">+ 15 นาที</button>
+          <button class="break-extend-btn" data-extend="30">+ 30 นาที</button>
+        </div>
+        <button id="breakEndBtn" class="btn-primary" style="width:100%;margin-top:8px">✅ กลับมาเดินทาง</button>
+        <button id="breakActiveCancel" class="btn-secondary" style="width:100%;margin-top:8px">ปิดเมนู</button>
+      </div>
+      <div id="breakNewSection">
+        <div class="break-section-label">ประเภท</div>
+        <div class="break-reason-grid">
+          <button class="break-reason" data-reason="fuel">⛽ เติมน้ำมัน</button>
+          <button class="break-reason" data-reason="meal">🍽 กินข้าว</button>
+          <button class="break-reason" data-reason="restroom">🚻 ห้องน้ำ</button>
+          <button class="break-reason selected" data-reason="rest">😴 พักผ่อน</button>
+        </div>
+        <div class="break-section-label" style="margin-top:12px">ระยะเวลา (นาที)</div>
+          <button class="break-duration selected" data-duration="30">30</button>
+          <button class="break-duration" data-duration="60">60</button>
+          <button class="break-duration" data-duration="90">90</button>
+        </div>
+        <div class="break-custom-row">
+          <span style="font-size:11px;color:var(--text-muted)">หรือกรอกเอง:</span>
+          <input id="breakCustomInput" type="number" min="5" max="480" step="1" placeholder="75" />
+          <span style="font-size:11px;color:var(--text-muted)">นาที (5-480)</span>
+        </div>
+        <div class="break-info-banner">💡 ระบบจะหยุดแจ้งเตือน "หาย/ไม่ขยับ" จนครบเวลา</div>
+        <div class="confirm-actions" style="margin-top:12px">
+          <button id="breakNewCancel" class="btn-secondary">ยกเลิก</button>
+          <button id="breakNewConfirm" class="btn-break">☕ เริ่มพัก <span id="breakNewBtnDuration">30</span> นาที</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal" hidden>
+    <div class="modal-content modal-confirm">
+      <div id="confirmIcon" class="confirm-icon">⚠️</div>
+      <h3 id="confirmTitle">ยืนยัน?</h3>
+      <p id="confirmMsg" class="confirm-msg">รายละเอียด...</p>
+      <div class="confirm-actions">
+        <button id="confirmCancel" class="btn-secondary">ยกเลิก</button>
+        <button id="confirmOk" class="btn-danger">ยืนยัน</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <p>กำลังโหลด…</p>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="./app.js?v=36"></script>
+</body>
+</html>
