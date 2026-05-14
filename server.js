@@ -18,6 +18,7 @@ const logger = require("./lib/logger");
 const scheduler = require("./services/scheduler");
 const { handleEvent } = require("./handlers/webhook");
 const apiRoutes = require("./routes/api");
+const mobileAuth = require("./routes/mobileAuth");
 
 const app = express();
 
@@ -174,6 +175,8 @@ app.get("/share/:token", async (req, res) => {
 });
 
 app.use("/api", apiRoutes);
+
+app.use("/api/mobile/auth", mobileAuth);
 
 // fallback: favicon และ static อื่น ๆ ใน public/ (ที่ไม่ใช่ /liff)
 app.use(express.static(path.join(__dirname, "public")));
