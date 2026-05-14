@@ -1,0 +1,96 @@
+{
+  "expo": {
+    "name": "AiKlao",
+    "slug": "aiklao-mobile",
+    "scheme": "aiklao",
+
+    "version": "0.1.0",
+
+    "orientation": "portrait",
+
+    "icon": "./assets/images/icon.png",
+
+    "userInterfaceStyle": "automatic",
+
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0E7C66"
+    },
+
+    "ios": {
+      "supportsTablet": false,
+
+      "bundleIdentifier": "com.aiklao.mobile",
+
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "AiKlao ใช้ตำแหน่งของคุณเพื่อ track trip แบบ realtime",
+
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "AiKlao ต้องการตำแหน่งตอน app ปิดอยู่เพื่อ track trip ต่อเนื่อง",
+
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
+      }
+    },
+
+    "android": {
+      "package": "com.aiklao.mobile",
+
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#0E7C66"
+      },
+
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ],
+
+      "intentFilters": [
+        {
+          "action": "VIEW",
+
+          "data": [
+            {
+              "scheme": "aiklao"
+            }
+          ],
+
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "$(PRODUCT_NAME) ใช้ Face ID เพื่อปกป้องข้อมูลของคุณ"
+        }
+      ]
+    ],
+
+    "extra": {
+      "apiBaseUrl": "https://api.aiklaotrip.com",
+
+      "lineChannelId": "2010079833",
+
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    }
+  }
+}

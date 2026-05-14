@@ -1,202 +1,124 @@
-# demo_app_ai_klao
+AiKlao Mobile 📱
 
-# 🚗 AiKlao Bot — LINE Trip Tracker
+Mobile application for the AiKlao trip management system built with Expo + React Native.
 
-LINE Bot สำหรับติดตามตำแหน่งของสมาชิกในทริปแบบ real-time
-ช่วยให้รู้ว่าแต่ละคนอยู่ห่างจากจุดหมายเท่าไหร่
-
----
-
-## 📌 Features
-
-* 📍 ส่งตำแหน่งผ่าน LINE
-* 🎯 ตั้งปลายทาง (เฉพาะหัวหน้า)
-* 📏 คำนวณระยะทางแบบ real-time
-* 👥 ดูสถานะสมาชิกทั้งหมด
-* 🤖 Auto-register สมาชิก (ไม่ต้องสมัครเอง)
-
----
-
-## 🏗️ Tech Stack
-
-* Node.js + Express 
-* LINE Messaging API
-* SQLite (better-sqlite3)
-* OpenStreetMap (Geocoding)
-
----
-
-## 📂 Project Structure
-
-```
-.
-├── server.js        # main server (LINE webhook)
-├── db.js            # database + schema
-├── seed.js          # create initial data
-├── check-db.js      # debug database
-├── utils/
-│   ├── geocode.js   # แปลงชื่อสถานที่ → lat/lng
-│   └── distance.js  # คำนวณระยะทาง
-├── .env             # config (secret)
+✨ Features
+🔐 Authentication screen
+🏠 Home dashboard
+🧭 Trips management
+⚙️ Settings screen
+🎨 Custom theme system
+📱 Cross-platform (Android / iOS)
+🛠️ Tech Stack
+React Native
+Expo
+TypeScript
+React Navigation
+TailwindCSS / NativeWind
+Axios
+📂 Project Structure
+aiklao-mobile/
+├── app/
+├── components/
+├── screens/
+├── services/
+├── theme/
+├── assets/
 ├── package.json
-```
-
----
-
-## ⚙️ Setup
-
-### 1. Clone project
-
-```bash
-git clone https://github.com/torpeerapolthi/demo_app_ai_klao_be.git
-cd demo_app_ai_klao_be
-```
-
----
-
-### 2. Install dependencies
-
-```bash
+├── app.json
+├── tsconfig.json
+└── babel.config.js
+🚀 Getting Started
+1. Clone repository
+git clone <your-repo-url>
+cd aiklao-mobile
+2. Install dependencies
 npm install
-```
 
----
+or
 
-### 3. Setup environment
+yarn install
+3. Start development server
+npx expo start
+📱 Run on Device
+Android
 
-สร้างไฟล์ `.env`
+Install:
 
-```env
-CHANNEL_SECRET=your_secret
-CHANNEL_ACCESS_TOKEN=your_token
-PORT=3000
-```
+Android Studio
+Android Emulator
 
-(ดูตัวอย่างจากไฟล์ )
+Then:
 
----
+npx expo start
 
-### 4. Seed database
+Press:
 
-```bash
-npm run seed
-```
+a
 
-จะสร้าง:
+to open Android emulator.
 
-* 1 trip
-* 1 leader (หัวหน้าทริป)
+iOS
 
----
+Requires:
 
-### 5. Run server
+macOS
+Xcode
 
-```bash
-npm start
-```
+Then:
 
----
+npx expo start
 
-### 6. Expose webhook (ใช้ ngrok)
+Press:
 
-```bash
-ngrok http 3000
-```
+i
 
-เอา URL ไปใส่ใน LINE Developer
+to open iOS simulator.
 
-```
-https://xxxx.ngrok-free.app/webhook
-```
+🎨 Theme
 
----
+Main color:
 
-## 🧠 How It Works
+Forest Green #0E7C66
 
-### 🧱 Database
+Typography and spacing are centralized in the theme system.
 
-มี 3 ตารางหลัก 
+📡 API Connection
 
-* `trips` → ข้อมูลทริป
-* `members` → สมาชิก (มี role leader)
-* `locations` → ประวัติตำแหน่ง
+Backend API:
 
----
+https://api.aiklaotrip.com
 
-### 🤖 Flow การทำงาน
+Example:
 
-1. User add bot → auto register
-2. Leader ตั้งปลายทาง
-3. Member ส่ง location
-4. ระบบคำนวณระยะทาง (Haversine) 
-5. แสดงผลใน LINE
+GET /api/me/trips
+GET /api/trip/:id
+🧪 Development Status
 
----
+Current phase:
 
-## 💬 Commands (User)
+Phase 5.0 — Mobile Foundation
 
-| คำสั่ง        | ความหมาย      |
-| ------------- | ------------- |
-| 📍 ส่งตำแหน่ง | แชร์ location |
-| สถานะ         | ดูทุกคน       |
-| ระยะ          | ดูระยะตัวเอง  |
-| ช่วย          | ดูวิธีใช้     |
+Implemented:
 
----
+Base project setup
+Navigation
+Theme system
+Shared UI components
+Initial screens
 
-## 👑 Commands (Leader Only)
+Planned:
 
-| คำสั่ง              | ความหมาย          |
-| ------------------- | ----------------- |
-| ตั้งปลายทาง เขาใหญ่ | กำหนด destination |
+Authentication integration
+Real API connection
+Live trip tracking
+Map integration
+Push notifications
+📦 Build
+Android APK
+eas build -p android
+iOS
+eas build -p ios
+👨‍💻 Developer
 
-ระบบใช้ geocoding จาก OpenStreetMap 
-
----
-
-## 🧪 Debug
-
-ดูข้อมูลใน database:
-
-```bash
-npm run check
-```
-
-จะแสดง:
-
-* trips
-* members
-* locations
-
-(จากไฟล์ )
-
----
-
-## ⚠️ Notes
-
-* คนแรกที่ใช้ bot = leader อัตโนมัติ
-* ถ้ายังไม่ตั้งปลายทาง → จะยังคำนวณระยะไม่ได้
-* รองรับเฉพาะประเทศไทย (optimize geocode)
-
----
-
-## 🚀 Future Improvements
-
-* 🔔 แจ้งเตือนเมื่อใกล้ถึง
-* 🗺️ แสดง map UI
-* 📱 ทำ mobile app
-* 👥 รองรับหลาย trip
-
----
-
-## 👨‍💻 Author
-
-* Jod (Backend Developer)
-
----
-
-## 💡 Concept
-
-> “เพื่อนอยู่ไหน ใกล้ถึงยัง — รู้ได้ทันที”
-
----
+Created by Jod 🚀
