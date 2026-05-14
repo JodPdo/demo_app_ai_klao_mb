@@ -30,7 +30,7 @@ tasks:
 
       # Explicit pull target (Windows/MINGW safe)
       - |
-        git pull origin develop --ff-only || \
+        git fetch origin develop && git merge --ff-only origin/develop
         (echo "❌ Cannot fast-forward — diverged branches. Reconcile first."; exit 1)
 
   is-tests-passed:
