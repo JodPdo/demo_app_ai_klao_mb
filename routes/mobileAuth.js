@@ -10,7 +10,7 @@
 //
 // Mount in server.js:
 //   const mobileAuth = require("./routes/mobileAuth");
-//   app.use("/api/mobile/auth", mobileAuth);
+//   app.use("/api/mobile/auth", mobileAuth);   ← BEFORE app.use("/api", apiRoutes);
 
 const express = require("express");
 const jwt = require("jsonwebtoken");
@@ -19,7 +19,7 @@ const logger = require("../lib/logger");
 
 const router = express.Router();
 
-const LINE_CHANNEL_ID = process.env.LINE_LOGIN_CHANNEL_ID;
+const LINE_CHANNEL_ID = process.env.MOBILE_LINE_CHANNEL_ID;
 const MOBILE_JWT_SECRET = process.env.MOBILE_JWT_SECRET;
 const JWT_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
@@ -62,7 +62,7 @@ async function verifyLineIdToken(idToken) {
 
 router.post("/", express.json(), async (req, res) => {
   if (!LINE_CHANNEL_ID || !MOBILE_JWT_SECRET) {
-    logger.error("[mobile-auth] missing LINE_LOGIN_CHANNEL_ID or MOBILE_JWT_SECRET");
+    logger.error("[mobile-auth] missing MOBILE_LINE_CHANNEL_ID or MOBILE_JWT_SECRET");
     return res.status(500).json({ error: "server_misconfigured" });
   }
 

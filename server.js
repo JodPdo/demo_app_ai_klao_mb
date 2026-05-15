@@ -2,8 +2,10 @@
 //
 // Architecture:
 //   /webhook        → LINE Messaging API (raw body)
+//   /api/mobile/*   → Mobile app (JWT auth) — Phase 5.1
 //   /api/*          → REST API for LIFF (json)
 //   /liff/*         → static LIFF Web App (Leaflet map)
+//   /watch/*        → public share viewer
 //   /healthz        → health check (Docker / Render)
 
 require("dotenv").config();
@@ -147,10 +149,10 @@ app.get("/share/:token", async (req, res) => {
        WHERE m.trip_id = $1
        ORDER BY
          CASE
-          WHEN m.arrived_at IS NOT NULL THEN 1
-          WHEN m.break_until > now() THEN 3
-          WHEN l.distance_km IS NULL THEN 4
-          ELSE 2
+           WHEN m.arrived_at IS NOT NULL THEN 1
+           WHEN m.break_until > now() THEN 3
+           WHEN l.distance_km IS NULL THEN 4
+           ELSE 2
          END,
          l.distance_km ASC NULLS LAST`,
       [share.trip_id]
@@ -174,9 +176,11 @@ app.get("/share/:token", async (req, res) => {
   }
 });
 
-// ✅ ลำดับที่ถูก
-app.use("/api/mobile/auth", mobileAuth); // ← specific มาก่อน
-app.use("/api", apiRoutes);              // ← catch-all มาทีหลัง
+// 🆕 Phase 5.1: Mobile auth MUST come BEFORE /api catch-all
+// เพราะ /api/* ใช้ liffAuth middleware ที่จะ block request mobile
+app.use("/api/mobile/auth", mobileAuth);
+
+app.use("/api", apiRoutes);
 
 // fallback: favicon และ static อื่น ๆ ใน public/ (ที่ไม่ใช่ /liff)
 app.use(express.static(path.join(__dirname, "public")));
@@ -207,12 +211,7 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
-
 start().catch((err) => {
   logger.error({ err: err.message, stack: err.stack }, "fatal startup error");
   process.exit(1);
 });
-
-module.exports = { app };
