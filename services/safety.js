@@ -1,4 +1,4 @@
-// Safety service
+// Safety service — v3.4.2 (Break Mode)
 //
 // Phase 3.4 (existing): stale, arrival, stationary, SOS
 // Phase 3.4.2 (new):
@@ -159,6 +159,7 @@ async function checkArrival(trip, member, lat, lng) {
 async function checkStationary(trip, member, currentLat, currentLng) {
   if (member.arrived_at) return false;
 
+  // 🆕 v3.4.2: skip if in break
   if (member.break_until && new Date(member.break_until) > new Date()) return false;
 
   if (member.last_stationary_check_at) {
@@ -236,7 +237,7 @@ async function triggerSOS(trip, member, lat, lng) {
 }
 
 /* =========================================================
-   BREAK MODE
+   🆕 BREAK MODE
 ========================================================= */
 
 function validateBreakInput(durationMin, reason) {
@@ -481,10 +482,13 @@ async function checkBreakExpiry() {
 }
 
 module.exports = {
+  // existing v3.4
   checkStaleMembers,
   checkArrival,
   checkStationary,
   triggerSOS,
+
+  // v3.4.2 break
   enterBreak,
   exitBreak,
   extendBreak,

@@ -1,14 +1,15 @@
 
-// Shared location processor
+// Shared location processor — v3.6.2
 // ใช้จาก handlers/webhook (LINE location event) + routes/api (LIFF live share)
-// ทำ: store location + checkArrival + checkStationary + checkBreakMovement + auto-renew live_share_until
+// ทำ: store location + checkArrival + checkStationary + checkBreakMovement
+//   + 🆕 v3.6.2: auto-renew live_share_until ทุกครั้งที่รับ location
 
 const db = require("../lib/db");
 const logger = require("../lib/logger");
 const { getDistance } = require("../utils/distance");
 const safety = require("./safety");
 
-// live indicator อายุ 10 นาที — ส่ง location ใหม่จะ renew
+// 🆕 v3.6.2: live indicator มีอายุ 10 นาที — ส่ง location ใหม่จะ renew
 const LIVE_INDICATOR_DURATION_MIN = 10;
 
 /**
@@ -58,6 +59,8 @@ async function processLocation(trip, member, lat, lng, opts = {}) {
     await db.query(`UPDATE members SET last_stale_alert_at = NULL WHERE id = $1`, [member.id]);
   }
 
+  // 🆕 v3.6.2: auto-renew live indicator
+  // — ส่ง location = ระบบยังเห็นคนนี้ active → ขึ้น 🔴 LIVE 10 นาที
   if (!member.arrived_at && !safety.isOnBreak(member)) {
     await db.query(
       "UPDATE members SET live_share_until = now() + INTERVAL '10 minutes', live_share_started_at = COALESCE(live_share_started_at, now()) WHERE id = $1",

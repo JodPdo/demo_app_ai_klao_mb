@@ -1,4 +1,4 @@
-// Scheduler
+// Scheduler — v3.5: + clearExpiredGroupBreaks
 
 const cron = require("node-cron");
 const db = require("../lib/db");
@@ -122,6 +122,7 @@ async function tick() {
     logger.error({ err: err.message }, "stale check failed");
   }
 
+  // v3.4.2: Break expiry reminders + cleanup (per-member)
   try {
     const r = await safety.checkBreakExpiry();
     if (r.remindersSent > 0 || r.expiredCleared > 0) {
@@ -131,6 +132,7 @@ async function tick() {
     logger.error({ err: err.message }, "break check failed");
   }
 
+  // 🆕 v3.5: Group break cleanup (after per-member cleanup)
   try {
     const n = await groupBreak.clearExpiredGroupBreaks();
     if (n > 0) logger.info({ n }, "group break tick");

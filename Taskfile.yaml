@@ -19,20 +19,26 @@ tasks:
 
   is-branch-clean:
     desc: Verify we are on develop with a clean working directory
-    run: once
     cmds:
-      - git branch --show-current | grep -qE '^develop$' ||
+      - |
+        git branch --show-current | grep -qE '^develop$' || \
         (echo "❌ Not on develop branch. Please checkout to develop first."; exit 1)
-      - git diff --quiet ||
+
+      - |
+        git diff --quiet || \
         (echo "❌ Working directory is not clean. Please commit or stash changes."; exit 1)
-      # 🆕 v2: --ff-only ป้องกัน merge commit ที่ทำ history ยุ่ง
-      - git pull --ff-only ||
+
+      # Explicit pull target (Windows/MINGW safe)
+      - |
+        git fetch origin develop && \
+        git merge --ff-only origin/develop || \
         (echo "❌ Cannot fast-forward — diverged branches. Reconcile first."; exit 1)
 
   is-tests-passed:
     desc: Run unit tests — must pass before releasing
     cmds:
-      - npm test ||
+      - |
+        npm test || \
         (echo "❌ Unit tests failed. Please fix and commit changes."; exit 1)
     deps:
       - is-branch-clean
@@ -41,55 +47,63 @@ tasks:
     desc: Verify the last commit is a release commit (e.g. "0.1.1")
     cmds:
       - git --no-pager log -1 --pretty=%B
-      - git --no-pager log -1 --pretty=%B | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+' ||
+
+      - |
+        git --no-pager log -1 --pretty=%B | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+' || \
         (echo "❌ Last commit is not a release commit. Please run task patch-release or task minor-release first."; exit 1)
+
     deps:
       - is-branch-clean
 
-  # 🆕 v2: ตรวจว่ามี commits ใหม่หลัง last tag — กัน noop release
   is-new-changes-since-release:
     desc: Verify there are commits to release (avoid noop release)
     cmds:
       - cmd: |
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
           if [ -z "$LAST_TAG" ]; then
             echo "ℹ️  No previous tags — first release"
           else
             COUNT=$(git rev-list "${LAST_TAG}..HEAD" --count)
+
             if [ "$COUNT" = "0" ]; then
               echo "❌ No new commits since $LAST_TAG — nothing to release"
               exit 1
             fi
+
             echo "ℹ️  $COUNT commit(s) since $LAST_TAG"
           fi
     deps:
       - is-branch-clean
 
-  # ─── Version bump (shared logic) ──────────────────────────────────────────────
+  # ─── Version bump ────────────────────────────────────────────────────────────
 
   _release:
     internal: true
     requires:
       vars: [BUMP]
+
     cmds:
-      # 🆕 v2: ใช้ multi-line cmd เพื่อให้ VERSION var อยู่ใน scope เดียว
-      # + tr -d '\r' กัน Windows CRLF issue
       - cmd: |
           echo "📦 Creating {{.BUMP}} release..."
-          OLD_VERSION=$(jq -r .version package.json | tr -d '\r')
+
           npm version {{.BUMP}} --no-git-tag-version
+
           VERSION=$(jq -r .version package.json | tr -d '\r')
+
           echo "📦 New version: $VERSION"
+
           git cliff --tag="v$VERSION" > CHANGELOG.md
-          sed -i '' "s/$OLD_VERSION/$VERSION/g" README.md
-          sed -i '' "s/$OLD_VERSION/$VERSION/g" CLAUDE.md
-          sed -i '' "s/$OLD_VERSION/$VERSION/g" openapi.yaml
-          git add package.json package-lock.json CHANGELOG.md README.md CLAUDE.md openapi.yaml
+
+          git add package.json package-lock.json CHANGELOG.md
+
           git commit -m "$VERSION"
+
           git tag "v$VERSION"
+
           echo ""
           echo "✅ Released v$VERSION"
-          echo "▶  Run 'task push-release' to push commits + tag"
+          echo "▶ Run 'task push-release' to push commits + tag"
 
   patch-release:
     desc: Bump patch version (x.y.Z) — bug fixes
@@ -102,7 +116,7 @@ tasks:
       - is-new-changes-since-release
 
   minor-release:
-    desc: Bump minor version (x.Y.0) — new features, non-breaking
+    desc: Bump minor version (x.Y.0) — new features
     cmds:
       - task: _release
         vars:
@@ -111,7 +125,6 @@ tasks:
       - is-tests-passed
       - is-new-changes-since-release
 
-  # 🆕 v2: เพิ่ม major release (สำหรับ breaking changes)
   major-release:
     desc: Bump major version (X.0.0) — breaking changes
     cmds:
@@ -122,72 +135,92 @@ tasks:
       - is-tests-passed
       - is-new-changes-since-release
 
-  # ─── Merge & push ─────────────────────────────────────────────────────────────
+  # ─── Merge & push ────────────────────────────────────────────────────────────
 
   merge-release:
     desc: Merge develop into main
     prompt: Merge branch develop into main — do you want to continue?
+
     cmds:
-      # 🆕 v2 fix: อ่าน VERSION จาก develop FIRST (ก่อน checkout main)
-      # + tr -d '\r' กัน Windows CRLF
       - cmd: |
           VERSION=$(jq -r .version package.json | tr -d '\r')
+
           echo "📦 Merging release v$VERSION → main"
-          git checkout main && git pull --ff-only
+
+          git checkout main
+          git pull origin main --ff-only
+
           git merge develop --no-ff -m "release v$VERSION"
+
           git checkout develop
+
     deps:
       - is-last-commit-release
 
   push-release:
     desc: Push develop, main, and all tags to remote
     prompt: Push develop + main branches and tags to origin — do you want to continue?
+
     cmds:
       - cmd: |
-          git checkout develop && git push
-          git checkout main && git push
+          git checkout develop
+          git push origin develop
+
+          git checkout main
+          git push origin main
+
           git push --tags
+
           VERSION=$(jq -r .version package.json | tr -d '\r')
+
           echo ""
           echo "🚀 Release v$VERSION pushed!"
           echo "▶ Watch deploy: https://github.com/torpeerapolthi/demo_app_ai_klao_be/actions"
-          git checkout develop
+
     deps:
       - merge-release
 
-  # ─── Utilities (no deps, safe to run anytime) ─────────────────────────────────
+  # ─── Utilities ───────────────────────────────────────────────────────────────
 
   version:
     desc: Show current version
     silent: true
+
     cmds:
       - jq -r .version package.json | tr -d '\r'
 
   changelog-preview:
     desc: Preview unreleased CHANGELOG entries (without writing)
     silent: true
+
     cmds:
       - git cliff --unreleased
 
   status:
     desc: Show release status (version, last tag, commits since)
     silent: true
+
     cmds:
       - cmd: |
           VERSION=$(jq -r .version package.json | tr -d '\r')
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
           BRANCH=$(git branch --show-current)
           UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "none")
+
           echo "Branch:        $BRANCH"
           echo "Upstream:      $UPSTREAM"
           echo "Version:       $VERSION"
           echo "Last tag:      $LAST_TAG"
+
           if [ "$LAST_TAG" != "none" ]; then
             COUNT=$(git rev-list "${LAST_TAG}..HEAD" --count)
+
             echo "Commits since: $COUNT"
+
             if [ "$COUNT" != "0" ]; then
               echo ""
               echo "Recent commits:"
+
               git log "${LAST_TAG}..HEAD" --oneline --no-decorate | head -10
             fi
           fi

@@ -1,4 +1,8 @@
-// REST API for LIFF Web App
+// REST API for LIFF Web App — v3.5
+// + 🆕 group break: POST /api/trip/:id/group-break, /group-break/end, /group-break/extend
+// + 🆕 trip rename: PATCH /api/trip/:id/name
+// + GET /api/trip/:id ส่ง group_break_until + name กลับด้วย
+// inherits: v3.4.2 break, v3.4 SOS
 
 const express = require("express");
 const cors = require("cors");
@@ -79,6 +83,7 @@ router.get("/trip/:tripId", async (req, res) => {
   );
   if (!trip) return res.status(404).json({ error: "trip not found" });
 
+  // 🆕 v3.4.2: include break columns
   const members = await db.many(
     `
     SELECT
@@ -113,6 +118,7 @@ router.get("/trip/:tripId", async (req, res) => {
     [tripId]
   );
 
+  // 🆕 v3.6: attach ETA per member
   await eta.attachETAs(trip, members);
 
   res.json({
@@ -225,7 +231,7 @@ router.post("/trip/:tripId/reset", async (req, res) => {
   }
 });
 
-/* SOS endpoint */
+/* v3.4: SOS endpoint */
 router.post("/trip/:tripId/sos", express.json(), async (req, res) => {
   const tripId = parseInt(req.params.tripId, 10);
   if (Number.isNaN(tripId)) return res.status(400).json({ error: "invalid trip id" });
@@ -253,7 +259,7 @@ router.post("/trip/:tripId/sos", express.json(), async (req, res) => {
   res.json({ ok: true });
 });
 
-/* Safety alert history */
+/* v3.4: Safety alert history */
 router.get("/trip/:tripId/safety", async (req, res) => {
   const tripId = parseInt(req.params.tripId, 10);
   if (Number.isNaN(tripId)) return res.status(400).json({ error: "invalid trip id" });
@@ -275,7 +281,7 @@ router.get("/trip/:tripId/safety", async (req, res) => {
   res.json({ alerts });
 });
 
-/* BREAK endpoints */
+/* 🆕 v3.4.2: BREAK endpoints */
 
 // helper: load member + trip with active-status guard
 async function loadTripAndMember(req, res, tripId, requireActive = true) {
@@ -376,7 +382,7 @@ router.post("/trip/:tripId/break/end", async (req, res) => {
   }
 });
 
-/* GROUP BREAK endpoints (leader only) */
+/* 🆕 v3.5: GROUP BREAK endpoints (leader only) */
 router.post("/trip/:tripId/group-break", express.json(), async (req, res) => {
   const tripId = parseInt(req.params.tripId, 10);
   if (Number.isNaN(tripId)) return res.status(400).json({ error: "invalid trip id" });
@@ -470,7 +476,7 @@ router.patch("/trip/:tripId/name", express.json(), async (req, res) => {
 });
 
 
-/* LIVE LOCATION endpoints */
+/* 🆕 v3.6: LIVE LOCATION endpoints */
 
 // per-user simple rate limit (15 sec) — ใน-memory map
 const liveRateMap = new Map();
@@ -570,7 +576,7 @@ router.post("/trip/:tripId/live-share/stop", async (req, res) => {
 });
 
 
-/* Share token management (leader only) */
+/* 🆕 v4.0: Share token management (leader only) */
 
 router.post("/trip/:tripId/share-tokens", express.json(), async (req, res) => {
   const tripId = parseInt(req.params.tripId, 10);

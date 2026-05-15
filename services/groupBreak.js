@@ -1,4 +1,4 @@
-// Group Break + Trip Naming
+// Group Break + Trip Naming — v3.5
 // แยกจาก safety.js เพื่อให้ deploy/maintain ง่ายขึ้น
 //
 // Group Break: leader ประกาศพักทั้งกลุ่มในคำสั่งเดียว

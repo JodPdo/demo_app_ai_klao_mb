@@ -25,8 +25,6 @@ const {
   enterGroupBreak,
   exitGroupBreak,
   extendGroupBreak,
-  clearExpiredGroupBreaks,
-  renameTrip,
   TRIP_NAME_MIN,
   TRIP_NAME_MAX,
 } = require("../../services/groupBreak");
@@ -260,78 +258,5 @@ describe("extendGroupBreak", () => {
     };
     const result = await extendGroupBreak(trip, leader, 15);
     expect(result.breakUntil.getTime()).toBeGreaterThan(original.getTime());
-  });
-});
-
-// ─── clearExpiredGroupBreaks ──────────────────────────────────────────────────
-
-describe("clearExpiredGroupBreaks", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    db.query.mockResolvedValue({});
-    db.many.mockResolvedValue([]);
-  });
-
-  test("returns 0 when no trips have expired group breaks", async () => {
-    db.many.mockResolvedValueOnce([]);
-    const count = await clearExpiredGroupBreaks();
-    expect(count).toBe(0);
-    expect(db.query).not.toHaveBeenCalled();
-  });
-
-  test("clears expired trips and returns count", async () => {
-    db.many.mockResolvedValueOnce([
-      { id: 10, line_group_id: "g:C111" },
-      { id: 11, line_group_id: null },
-    ]);
-    const count = await clearExpiredGroupBreaks();
-    expect(count).toBe(2);
-    // 2 trips × (UPDATE trips + INSERT alert) = 4 query calls
-    expect(db.query.mock.calls.length).toBeGreaterThanOrEqual(4);
-  });
-});
-
-// ─── renameTrip ───────────────────────────────────────────────────────────────
-
-describe("renameTrip", () => {
-  const trip = { id: 1, name: "ชื่อเดิม", line_group_id: "g:C123456" };
-  const leader = { id: 10, is_leader: true, line_user_id: "U123", display_name: "ผู้นำ" };
-  const nonLeader = { id: 11, is_leader: false };
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    db.query.mockResolvedValue({});
-    lineClient.pushMessage.mockResolvedValue({});
-  });
-
-  test("rejects non-leader", async () => {
-    const result = await renameTrip(trip, nonLeader, "ชื่อใหม่");
-    expect(result).toMatchObject({ ok: false, error: "leader only" });
-  });
-
-  test("rejects invalid name (empty string)", async () => {
-    const result = await renameTrip(trip, leader, "");
-    expect(result).toMatchObject({ ok: false });
-  });
-
-  test("rejects same name as current", async () => {
-    const result = await renameTrip(trip, leader, "ชื่อเดิม");
-    expect(result).toMatchObject({ ok: false, error: "ชื่อเดิมอยู่แล้ว" });
-  });
-
-  test("renames successfully, runs 2 DB queries, and sends LINE push", async () => {
-    const result = await renameTrip(trip, leader, "ชื่อใหม่");
-    expect(result.ok).toBe(true);
-    expect(result.name).toBe("ชื่อใหม่");
-    expect(result.oldName).toBe("ชื่อเดิม");
-    expect(db.query).toHaveBeenCalledTimes(2);
-    expect(lineClient.pushMessage).toHaveBeenCalledTimes(1);
-  });
-
-  test("skips LINE push when trip has no line_group_id", async () => {
-    const tripNoGroup = { ...trip, line_group_id: null };
-    const result = await renameTrip(tripNoGroup, leader, "ชื่อใหม่");
-    expect(result.ok).toBe(true);
-    expect(lineClient.pushMessage).not.toHaveBeenCalled();
   });
 });

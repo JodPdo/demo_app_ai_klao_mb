@@ -1,4 +1,4 @@
-// Share Token Service
+// Share Token Service — v4.0
 // Public share links สำหรับครอบครัวที่ไม่ได้อยู่ใน LINE group
 //
 // Token lifecycle:

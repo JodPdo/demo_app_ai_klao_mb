@@ -1,4 +1,4 @@
-// AiKlao Bot — Express + LINE webhook + REST API + LIFF static + Scheduler
+// AiKlao Bot v3.0 — Express + LINE webhook + REST API + LIFF static + Scheduler
 //
 // Architecture:
 //   /webhook        → LINE Messaging API (raw body)
@@ -18,10 +18,12 @@ const logger = require("./lib/logger");
 const scheduler = require("./services/scheduler");
 const { handleEvent } = require("./handlers/webhook");
 const apiRoutes = require("./routes/api");
+const mobileAuth = require("./routes/mobileAuth");
 
 const app = express();
 
-// trust proxy: ngrok / nginx / cloudflare set X-Forwarded-For (needed for express-rate-limit)
+// 🆕 v3.6 fix: trust proxy (ngrok / nginx / cloudflare set X-Forwarded-For)
+// ป้องกัน express-rate-limit ValidationError + ใช้ IP ที่ถูกต้อง
 app.set("trust proxy", 1);
 
 // ✅ Security headers — disable CSP สำหรับ LIFF เพราะต้องโหลด external (Leaflet, LIFF SDK)
@@ -73,8 +75,9 @@ app.post(
    📡 REST API + 🌍 LIFF static
 ========================= */
 
-// /liff must come before the generic /public static to ensure no-cache headers are applied
-// (express is first-match — if /public were first, /liff/* would bypass setHeaders)
+// 🆕 v3.6 fix: /liff static FIRST (with no-cache) — ลำดับสำคัญ
+//   express middleware เป็น first-match — ถ้าเอา /liff หลัง /public ทั่วไป
+//   request `/liff/*` จะถูก served ด้วย /public ก่อน (no setHeaders) ทำให้ cache fix ไม่ทำงาน
 app.use("/liff", express.static(path.join(__dirname, "public", "liff"), {
   etag: false,
   lastModified: false,
@@ -87,6 +90,7 @@ app.use("/liff", express.static(path.join(__dirname, "public", "liff"), {
   }
 }));
 
+// 🆕 v4.0: /watch static (public viewer — no auth, no cache)
 app.use("/watch", express.static(path.join(__dirname, "public", "watch"), {
   etag: false,
   lastModified: false,
@@ -104,7 +108,8 @@ app.get("/watch/:token", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "watch", "index.html"));
 });
 
-// registered at app level so it bypasses the liffAuth middleware chain in /api
+// 🆕 v4.0 fix: PUBLIC /api/watch/:token — register ที่ app level
+// (เพราะ /api/watch/:token ใน router/api.js โดน middleware chain กั้น)
 const shareToken = require("./services/shareToken");
 const eta = require("./services/eta");
 const dbForWatch = require("./lib/db");
@@ -169,7 +174,9 @@ app.get("/share/:token", async (req, res) => {
   }
 });
 
-app.use("/api", apiRoutes);
+// ✅ ลำดับที่ถูก
+app.use("/api/mobile/auth", mobileAuth); // ← specific มาก่อน
+app.use("/api", apiRoutes);              // ← catch-all มาทีหลัง
 
 // fallback: favicon และ static อื่น ๆ ใน public/ (ที่ไม่ใช่ /liff)
 app.use(express.static(path.join(__dirname, "public")));
@@ -200,11 +207,7 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-module.exports = { app };
-
-if (require.main === module) {
-  start().catch((err) => {
-    logger.error({ err: err.message, stack: err.stack }, "fatal startup error");
-    process.exit(1);
-  });
-}
+start().catch((err) => {
+  logger.error({ err: err.message, stack: err.stack }, "fatal startup error");
+  process.exit(1);
+});
