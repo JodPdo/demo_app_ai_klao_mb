@@ -1,3 +1,8 @@
+## [0.1.7] - 2026-05-15
+
+### 🐛 Bug Fixes
+
+- *(mobile)* Phase 5.1 route order + env name (overwrite)
 ## [0.1.6] - 2026-05-15
 
 ### 🐛 Bug Fixes

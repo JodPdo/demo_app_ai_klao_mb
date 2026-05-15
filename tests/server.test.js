@@ -261,3 +261,6 @@ describe("GET /watch/:token", () => {
     expect([200, 404]).toContain(res.status);
   });
 });
+
+
+module.exports = { app };
