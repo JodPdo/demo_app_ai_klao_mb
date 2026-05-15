@@ -147,10 +147,10 @@ app.get("/share/:token", async (req, res) => {
        WHERE m.trip_id = $1
        ORDER BY
          CASE
-           WHEN m.arrived_at IS NOT NULL THEN 1
-           WHEN m.break_until > now() THEN 3
-           WHEN l.distance_km IS NULL THEN 4
-           ELSE 2
+          WHEN m.arrived_at IS NOT NULL THEN 1
+          WHEN m.break_until > now() THEN 3
+          WHEN l.distance_km IS NULL THEN 4
+          ELSE 2
          END,
          l.distance_km ASC NULLS LAST`,
       [share.trip_id]
@@ -207,7 +207,12 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 start().catch((err) => {
   logger.error({ err: err.message, stack: err.stack }, "fatal startup error");
   process.exit(1);
 });
+
+module.exports = { app };

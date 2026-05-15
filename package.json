@@ -1,6 +1,6 @@
 {
   "name": "aiklao-bot",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "LINE bot + LIFF map + destination picker (PostgreSQL + Docker)",
   "main": "server.js",
   "scripts": {
@@ -41,7 +41,8 @@
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "supertest": "^7.2.2"
   },
   "jest": {
     "testEnvironment": "node",

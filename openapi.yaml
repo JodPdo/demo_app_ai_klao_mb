@@ -1,0 +1,863 @@
+openapi: 3.0.3
+info:
+  title: AiKlao Bot API
+  version: 0.1.9
+  description: |
+    Real-time group trip tracker บน LINE Messaging Platform
+    LINE Bot + REST API สำหรับ LIFF web app
+
+    **Authentication:** ใช้ LIFF access token (`Authorization: Bearer <token>`)
+    **Rate limit:** 100 req / 15 min per IP · location update: min 12 s per member
+    **Coordinates:** Thailand bounds — lat 5–21, lng 95–106
+
+servers:
+  - url: https://your-vps-domain.com
+    description: Production (VPS)
+  - url: http://localhost:3001
+    description: Local development
+
+tags:
+  - name: System
+  - name: Auth
+  - name: Trip
+  - name: Destination
+  - name: Location
+  - name: Break
+  - name: Group Break
+  - name: Live Share
+  - name: Safety
+  - name: Notification
+  - name: Geocoding
+  - name: Share Token
+
+components:
+  securitySchemes:
+    liffToken:
+      type: http
+      scheme: bearer
+      description: LIFF access token จาก `liff.getAccessToken()`
+
+  schemas:
+    # ── Core entities ─────────────────────────────────────
+    Trip:
+      type: object
+      properties:
+        id:                    { type: integer }
+        name:                  { type: string }
+        dest_lat:              { type: number, nullable: true }
+        dest_lng:              { type: number, nullable: true }
+        dest_name:             { type: string, nullable: true }
+        status:                { type: string, enum: [active, archived] }
+        created_at:            { type: string, format: date-time }
+        group_break_until:     { type: string, format: date-time, nullable: true }
+        group_break_reason:    { type: string, nullable: true }
+
+    Member:
+      type: object
+      properties:
+        id:                { type: integer }
+        line_user_id:      { type: string }
+        display_name:      { type: string }
+        picture_url:       { type: string, nullable: true }
+        is_leader:         { type: boolean }
+        distance_km:       { type: number, nullable: true }
+        eta:               { type: integer, description: "ETA in minutes", nullable: true }
+        break_until:       { type: string, format: date-time, nullable: true }
+        break_reason:      { type: string, nullable: true }
+        arrived_at:        { type: string, format: date-time, nullable: true }
+        last_location_at:  { type: string, format: date-time, nullable: true }
+
+    ShareToken:
+      type: object
+      properties:
+        id:           { type: integer }
+        token:        { type: string, format: uuid }
+        label:        { type: string, nullable: true }
+        privacy_mode: { type: string, enum: [full, initial-only] }
+        view_count:   { type: integer }
+        created_at:   { type: string, format: date-time }
+        expires_at:   { type: string, format: date-time, nullable: true }
+        revoked_at:   { type: string, format: date-time, nullable: true }
+
+    SafetyAlert:
+      type: object
+      properties:
+        id:           { type: integer }
+        alert_type:   { type: string }
+        triggered_at: { type: string, format: date-time }
+        resolved_at:  { type: string, format: date-time, nullable: true }
+        metadata:     { type: object, nullable: true }
+        member_name:  { type: string }
+
+    Notification:
+      type: object
+      properties:
+        enabled:       { type: boolean }
+        interval_min:  { type: integer }
+        last_pushed_at:{ type: string, format: date-time, nullable: true }
+
+    # ── Common responses ──────────────────────────────────
+    OkResponse:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string, example: "human-readable error message" }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid LIFF token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Leader-only action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  parameters:
+    tripId:
+      name: tripId
+      in: path
+      required: true
+      schema: { type: integer }
+      description: Trip ID
+
+# ════════════════════════════════════════════════════════
+# PATHS
+# ════════════════════════════════════════════════════════
+paths:
+
+  # ── System ───────────────────────────────────────────
+  /healthz:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Runs `SELECT 1` against DB. Used by PM2 / uptime monitors.
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        '503':
+          description: DB unreachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:    { type: boolean, example: false }
+                  error: { type: string }
+
+  /api/config:
+    get:
+      tags: [System]
+      summary: Public LIFF config
+      description: Returns LIFF app ID and refresh interval. Called on LIFF init.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  liffId:            { type: string }
+                  refreshIntervalSec:{ type: integer, example: 15 }
+
+  /webhook:
+    post:
+      tags: [System]
+      summary: LINE Messaging API webhook
+      description: |
+        Receives LINE events (join, leave, follow, message, location).
+        Must always respond HTTP 200 — LINE retries on any other status.
+        Verified by HMAC-SHA256 signature in `X-Line-Signature` header.
+      security: []
+      parameters:
+        - name: X-Line-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Always 200 (even on internal errors)
+
+  # ── Share Token (public) ──────────────────────────────
+  /share/{token}:
+    get:
+      tags: [Share Token]
+      summary: Public watch page — no auth required
+      description: |
+        ดูสถานะทริปโดยไม่ต้องเข้า LINE
+        Privacy mode ถูก apply ตาม token ที่สร้าง
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trip:         { $ref: '#/components/schemas/Trip' }
+                  members:      { type: array, items: { $ref: '#/components/schemas/Member' } }
+                  privacy_mode: { type: string, enum: [full, initial-only] }
+        '404':
+          description: Token not found or revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ── Auth ─────────────────────────────────────────────
+  /api/me:
+    get:
+      tags: [Auth]
+      summary: Get authenticated user profile
+      security:
+        - liffToken: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                    properties:
+                      userId:      { type: string }
+                      displayName: { type: string }
+                      pictureUrl:  { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/me/trips:
+    get:
+      tags: [Auth]
+      summary: List active trips for authenticated user
+      security:
+        - liffToken: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trips:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: '#/components/schemas/Trip' }
+                        - type: object
+                          properties:
+                            is_leader:    { type: boolean }
+                            member_count: { type: integer }
+                            active_count: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ── Trip ─────────────────────────────────────────────
+  /api/trip/{tripId}:
+    get:
+      tags: [Trip]
+      summary: Get full trip state
+      description: Returns trip info, all members with ETA, and caller's member row.
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trip:         { $ref: '#/components/schemas/Trip' }
+                  members:      { type: array, items: { $ref: '#/components/schemas/Member' } }
+                  notification: { $ref: '#/components/schemas/Notification' }
+                  me:           { $ref: '#/components/schemas/Member' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/trip/{tripId}/name:
+    patch:
+      tags: [Trip]
+      summary: Rename trip (leader only)
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      name:     { type: string }
+                      old_name: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/trip/{tripId}/archive:
+    post:
+      tags: [Trip]
+      summary: Archive trip (leader only)
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      action: { type: string, example: archived }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/trip/{tripId}/reset:
+    post:
+      tags: [Trip]
+      summary: Reset trip — clear locations & destination (leader only)
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      action: { type: string, example: reset }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Destination ───────────────────────────────────────
+  /api/trip/{tripId}/destination:
+    post:
+      tags: [Destination]
+      summary: Set destination (leader only)
+      description: Validates Thailand bounds — lat 5–21, lng 95–106
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng, name]
+              properties:
+                lat:  { type: number, minimum: 5,  maximum: 21 }
+                lng:  { type: number, minimum: 95, maximum: 106 }
+                name: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OkResponse' }
+        '400':
+          description: Invalid coordinates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Location ──────────────────────────────────────────
+  /api/trip/{tripId}/location:
+    post:
+      tags: [Location]
+      summary: Submit location update
+      description: |
+        Rate limited: min 12 seconds between updates per member (checked via DB timestamp).
+        Triggers arrival check, stationary check, and break auto-exit.
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                lat:      { type: number, minimum: 5,  maximum: 21 }
+                lng:      { type: number, minimum: 95, maximum: 106 }
+                accuracy: { type: number, description: "GPS accuracy in metres" }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:          { type: boolean }
+                  distance_km: { type: number }
+                  arrived:     { type: boolean }
+                  break_ended: { type: boolean }
+        '429':
+          description: Too soon — min 12s between updates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ── Break ─────────────────────────────────────────────
+  /api/trip/{tripId}/break:
+    post:
+      tags: [Break]
+      summary: Start personal break
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [duration_min]
+              properties:
+                duration_min:
+                  type: integer
+                  minimum: 5
+                  maximum: 480
+                reason:
+                  type: string
+                  enum: [fuel, meal, restroom, rest, other]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      break_until:  { type: string, format: date-time }
+                      duration_min: { type: integer }
+                      reason:       { type: string }
+
+  /api/trip/{tripId}/break/extend:
+    post:
+      tags: [Break]
+      summary: Extend current break
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [additional_min]
+              properties:
+                additional_min: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      break_until: { type: string, format: date-time }
+
+  /api/trip/{tripId}/break/end:
+    post:
+      tags: [Break]
+      summary: End break manually
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      actual_min: { type: integer }
+
+  # ── Group Break ───────────────────────────────────────
+  /api/trip/{tripId}/group-break:
+    post:
+      tags: [Group Break]
+      summary: Start group break (leader only)
+      description: Syncs break for all active members simultaneously
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [duration_min]
+              properties:
+                duration_min: { type: integer, minimum: 5, maximum: 480 }
+                reason:       { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      break_until:  { type: string, format: date-time }
+                      duration_min: { type: integer }
+                      reason:       { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/trip/{tripId}/group-break/extend:
+    post:
+      tags: [Group Break]
+      summary: Extend group break (leader only)
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [additional_min]
+              properties:
+                additional_min: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      break_until: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/trip/{tripId}/group-break/end:
+    post:
+      tags: [Group Break]
+      summary: End group break early (leader only)
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OkResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Live Share ────────────────────────────────────────
+  /api/trip/{tripId}/live-share/start:
+    post:
+      tags: [Live Share]
+      summary: Start live location sharing
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                duration_min: { type: integer, maximum: 60 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      live_share_until: { type: string, format: date-time }
+                      duration_min:     { type: integer }
+
+  /api/trip/{tripId}/live-share/stop:
+    post:
+      tags: [Live Share]
+      summary: Stop live location sharing
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OkResponse' }
+
+  # ── Safety ────────────────────────────────────────────
+  /api/trip/{tripId}/sos:
+    post:
+      tags: [Safety]
+      summary: Trigger SOS alert
+      description: ส่ง LINE message ไปยังกลุ่มทันที พร้อมตำแหน่งปัจจุบัน
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OkResponse' }
+
+  /api/trip/{tripId}/safety:
+    get:
+      tags: [Safety]
+      summary: Get safety alert history
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alerts:
+                    type: array
+                    items: { $ref: '#/components/schemas/SafetyAlert' }
+
+  # ── LIFF Watch Redirect ───────────────────────────────
+  /watch/{token}:
+    get:
+      tags: [Share Token]
+      summary: Legacy LIFF watch redirect
+      description: |
+        Redirect shortlink for external trip viewers — redirects browser to `/liff/`.
+        Notification settings are managed via LINE commands only (เปิดแจ้งเตือน / ปิดแจ้งเตือน),
+        not via a dedicated REST endpoint. Settings are returned as part of GET /api/trip/{tripId}.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '302':
+          description: Redirect to LIFF map page
+        '404':
+          description: Token not found or revoked
+
+  # ── Geocoding ─────────────────────────────────────────
+  /api/geocode/search:
+    get:
+      tags: [Geocoding]
+      summary: Forward geocoding (place search)
+      description: Proxy to Nominatim OSM. Max 5 results.
+      security:
+        - liffToken: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+          description: ชื่อสถานที่ เช่น "เขาใหญ่"
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        lat:         { type: number }
+                        lng:         { type: number }
+                        displayName: { type: string }
+                        type:        { type: string }
+                        class:       { type: string }
+
+  /api/geocode/reverse:
+    get:
+      tags: [Geocoding]
+      summary: Reverse geocoding
+      security:
+        - liffToken: []
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number }
+        - name: lng
+          in: query
+          required: true
+          schema: { type: number }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lat:         { type: number }
+                  lng:         { type: number }
+                  displayName: { type: string }
+                  address:     { type: object }
+
+  # ── Share Token (API) ─────────────────────────────────
+  /api/trip/{tripId}/share-tokens:
+    post:
+      tags: [Share Token]
+      summary: Create share token (leader only)
+      description: สร้างลิงก์สาธารณะสำหรับคนนอกกลุ่ม LINE. Max 20 tokens per trip.
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [privacy_mode]
+              properties:
+                label:
+                  type: string
+                  description: ชื่อ label เช่น "ลิงก์สำหรับครอบครัว"
+                privacy_mode:
+                  type: string
+                  enum: [full, initial-only]
+                expires_in_hours:
+                  type: integer
+                  description: จำนวนชั่วโมงที่ token มีอายุ (null = ไม่หมดอายุ)
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/OkResponse' }
+                  - type: object
+                    properties:
+                      token:        { type: string, format: uuid }
+                      url:          { type: string }
+                      privacy_mode: { type: string }
+                      expires_at:   { type: string, format: date-time, nullable: true }
+        '400':
+          description: Max 20 tokens reached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    get:
+      tags: [Share Token]
+      summary: List share tokens (leader only)
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    type: array
+                    items: { $ref: '#/components/schemas/ShareToken' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/trip/{tripId}/share-tokens/{tokenId}:
+    delete:
+      tags: [Share Token]
+      summary: Revoke share token (leader only)
+      security:
+        - liffToken: []
+      parameters:
+        - { $ref: '#/components/parameters/tripId' }
+        - name: tokenId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OkResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }

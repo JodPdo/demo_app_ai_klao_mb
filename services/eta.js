@@ -69,10 +69,10 @@ async function calcMemberETA(trip, member) {
   // ดึง 5 จุดล่าสุด
   const rows = await db.many(
     `SELECT latitude, longitude, EXTRACT(EPOCH FROM created_at) * 1000 AS ts
-     FROM locations
-     WHERE member_id = $1
-     ORDER BY created_at DESC
-     LIMIT $2`,
+    FROM locations
+    WHERE member_id = $1
+    ORDER BY created_at DESC
+    LIMIT $2`,
     [member.id, N_POINTS]
   );
 
