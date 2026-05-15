@@ -1,3 +1,9 @@
+## [0.1.6] - 2026-05-15
+
+### 🐛 Bug Fixes
+
+- *(mobile)* Correct env name + route order for /api/mobile/auth
+- *(test)* Export app for supertest
 ## [0.1.5] - 2026-05-15
 
 ### 🐛 Bug Fixes
