@@ -1,3 +1,8 @@
+## [0.1.8] - 2026-05-16
+
+### ⚙️ Miscellaneous Tasks
+
+- Update Taskfile
 ## [0.1.7] - 2026-05-15
 
 ### 🐛 Bug Fixes
