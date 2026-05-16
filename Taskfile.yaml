@@ -175,7 +175,7 @@ tasks:
 
           echo ""
           echo "🚀 Release v$VERSION pushed!"
-          echo "▶ Watch deploy: https://github.com/torpeerapolthi/demo_app_ai_klao_be/actions"
+          echo "▶ Watch deploy: https://github.com/JodPdo/demo_app_ai_klao_be/actions"
 
     deps:
       - merge-release
