@@ -1,3 +1,8 @@
+## [0.1.9] - 2026-05-18
+
+### 🚀 Features
+
+- *(mobile)* EAS project setup + dev-client (Phase 5.1)
 ## [0.1.8] - 2026-05-16
 
 ### ⚙️ Miscellaneous Tasks
