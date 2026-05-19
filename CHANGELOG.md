@@ -1,3 +1,8 @@
+## [0.1.11] - 2026-05-19
+
+### 🐛 Bug Fixes
+
+- Remove mobile route
 ## [0.1.9] - 2026-05-18
 
 ### 🚀 Features
