@@ -1,3 +1,8 @@
+## [0.1.12] - 2026-05-19
+
+### ⚙️ Miscellaneous Tasks
+
+- Trigger release
 ## [0.1.11] - 2026-05-19
 
 ### 🐛 Bug Fixes
