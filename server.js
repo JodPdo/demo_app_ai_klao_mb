@@ -23,6 +23,7 @@ const jwtAuth = require("./middleware/jwtAuth");
 const mobileAuth = require("./routes/mobileAuth");
 const oauthCallback = require("./routes/oauthCallback");
 const mobileMe = require("./routes/mobileMe");
+const mobileTrips = require("./routes/mobileTrips");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -91,6 +92,7 @@ app.use("/api/mobile/oauth", oauthCallback);
 /* =========================
    🔐 PROTECTED ROUTES
 ========================= */
+app.use("/api/mobile/trips", jwtAuth, mobileTrips);
 app.use("/api/mobile", jwtAuth, mobileMe);
 
 /* =========================

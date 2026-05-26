@@ -1,11 +1,11 @@
-// คำนวณระยะทางระหว่างพิกัด 2 จุด (กิโลเมตร) ด้วย Haversine formula
+// Haversine distance between two GPS coordinates, returns kilometres.
 
 function toRad(value) {
   return (value * Math.PI) / 180;
 }
 
 function getDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // รัศมีโลก (km)
+  const R = 6371; // Earth radius in km
 
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
