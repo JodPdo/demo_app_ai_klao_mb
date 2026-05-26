@@ -1,4 +1,4 @@
-name: Deploy aiklao_be
+name: Deploy aiklao_mb
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   deploy:
-    name: Deploy BE to VPS
+    name: Deploy MB to VPS
     runs-on: ubuntu-latest
 
     steps:
@@ -43,4 +43,4 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            /var/www/aiklao_be/deploy.sh
+            /var/www/aiklao_mb/deploy.sh

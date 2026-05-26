@@ -1,3 +1,13 @@
+## [0.1.14] - 2026-05-26
+
+### 🚀 Features
+
+- *(mobile)* Add OAuth callback bridge and /me endpoint
+
+### 🐛 Bug Fixes
+
+- *(ecosystem)* Add aiklao_mb PM2 entry, remove stale aiklao_be copy
+- *(ci)* Point aiklao_mb workflow at aiklao_mb deploy script (was pointing at aiklao_be)
 ## [0.1.12] - 2026-05-19
 
 ### ⚙️ Miscellaneous Tasks

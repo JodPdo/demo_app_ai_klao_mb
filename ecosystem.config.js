@@ -1,33 +1,35 @@
-// PM2 ecosystem config — AiKlao Backend
-// ใช้: pm2 start ecosystem.config.js
-// reload: pm2 reload aiklao_be
-// restart: pm2 restart aiklao_be --update-env
+// PM2 ecosystem config — AiKlao Mobile API (aiklao_mb)
+// Usage:   pm2 start ecosystem.config.js
+// Reload:  pm2 reload aiklao_mb
+// Restart: pm2 restart aiklao_mb --update-env
 
 module.exports = {
   apps: [
     {
-      name: "aiklao_be",
+      name: "aiklao_mb",
       script: "server.js",
-      cwd: "/var/www/aiklao_be/demo_app_ai_klao_be",
+      cwd: "/var/www/aiklao_mb/demo_app_ai_klao_mb",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
       watch: false,
       max_memory_restart: "512M",
 
-      // env (override .env ไม่ได้ — pm2 inject)
+      // PM2 injects these before dotenv runs; dotenv (override:false) will not overwrite them.
+      // PORT must be explicit here — must not collide with aiklao_be:3000.
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        PORT: 3002
       },
 
-      // restart policy — กัน infinite loop
+      // Restart policy — prevents infinite crash loops.
       min_uptime: "10s",
       max_restarts: 10,
       restart_delay: 3000,
 
-      // logs
-      out_file: "/root/.pm2/logs/aiklao-be-out.log",
-      error_file: "/root/.pm2/logs/aiklao-be-error.log",
+      // Logs
+      out_file: "/root/.pm2/logs/aiklao-mb-out.log",
+      error_file: "/root/.pm2/logs/aiklao-mb-error.log",
       merge_logs: true,
       time: true
     }
