@@ -21,6 +21,7 @@ const scheduler = require("./services/scheduler");
 const { handleEvent } = require("./handlers/webhook");
 const apiRoutes = require("./routes/api");
 const mobileAuth = require("./routes/mobileAuth");
+const oauthCallback = require("./routes/oauthCallback");
 
 const app = express();
 
@@ -180,6 +181,7 @@ app.get("/share/:token", async (req, res) => {
 // เพราะ /api/* ใช้ liffAuth middleware ที่จะ block request mobile
 app.use("/api/mobile/auth", mobileAuth);
 
+app.use("/api/mobile/oauth", oauthCallback);
 app.use("/api", apiRoutes);
 
 // fallback: favicon และ static อื่น ๆ ใน public/ (ที่ไม่ใช่ /liff)
