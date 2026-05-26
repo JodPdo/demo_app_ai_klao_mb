@@ -1,3 +1,18 @@
+## [0.1.16] - 2026-05-26
+
+### 🚀 Features
+
+- *(trips)* Add 5 mobile trip endpoints (Phase 5.2)
+## [0.1.15] - 2026-05-26
+
+### 🐛 Bug Fixes
+
+- *(server)* Export { app } for test compatibility (post-merge follow-up)
+- *(deps)* Add pino-http (and others if needed) for v0.1.14 scaffold
+
+### 💼 Other
+
+- V0.1.14
 ## [0.1.14] - 2026-05-26
 
 ### 🚀 Features
@@ -9,6 +24,10 @@
 - *(ecosystem)* Add aiklao_mb PM2 entry, remove stale aiklao_be copy
 - *(ci)* Point aiklao_mb workflow at aiklao_mb deploy script (was pointing at aiklao_be)
 ## [0.1.12] - 2026-05-19
+
+### 🚀 Features
+
+- *(mobile)* Add /me endpoint (JWT-protected user profile)
 
 ### ⚙️ Miscellaneous Tasks
 
