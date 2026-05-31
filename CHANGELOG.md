@@ -1,3 +1,8 @@
+## [0.1.17] - 2026-05-31
+
+### 🧪 Testing
+
+- *(mobile-trips)* Assert accuracy_m forwarded to location INSERT
 ## [0.1.16] - 2026-05-26
 
 ### 🚀 Features
