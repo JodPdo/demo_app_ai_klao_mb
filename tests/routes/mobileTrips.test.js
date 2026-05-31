@@ -289,6 +289,23 @@ describe("POST /api/mobile/trips/:id/location", () => {
     expect(res.status).toBe(403);
     expect(res.body).toMatchObject({ error: "forbidden" });
   });
+
+  test("201 -- accuracy_m populated when client sends accuracy field", async () => {
+    db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: null, dest_lng: null });
+    db.query.mockResolvedValueOnce({ rows: [{ id: 101 }] });
+
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/location`)
+      .set(AUTH)
+      .send({ lat: 13.756, lng: 100.502, accuracy: 12.5 });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ ok: true, locationId: "101" });
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining("accuracy_m"),
+      expect.arrayContaining([12.5]),
+    );
+  });
 });
 
 // ---- POST /api/mobile/trips/:id/stop ---------------------------------------
