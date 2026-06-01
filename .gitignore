@@ -14,3 +14,12 @@ __tests__
 coverage
 .claude
 aiklao-mobile/.expo/
+# Tech debt cleanup 2026-06-01
+eas.json
+aiklao-mobile/
+docs/
+
+# Tech debt cleanup 2026-06-01
+eas.json
+aiklao-mobile/
+docs/
