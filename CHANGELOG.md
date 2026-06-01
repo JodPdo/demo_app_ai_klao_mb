@@ -1,3 +1,9 @@
+## [0.1.18] - 2026-06-01
+
+### ⚙️ Miscellaneous Tasks
+
+- *(cleanup)* Untrack nested aiklao-mobile + docs subfolders
+- *(cleanup)* Remove dead v3.0 files and unused deps
 ## [0.1.17] - 2026-05-31
 
 ### 🧪 Testing
