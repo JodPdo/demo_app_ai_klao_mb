@@ -1,3 +1,8 @@
+## [0.1.19] - 2026-06-03
+
+### 🚀 Features
+
+- *(trips)* Phase 5.4 Session B — Trip Detail backend (v0.1.19)
 ## [0.1.18] - 2026-06-01
 
 ### ⚙️ Miscellaneous Tasks

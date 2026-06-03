@@ -143,25 +143,61 @@ router.get("/:id", async (req, res) => {
     if (!membership) return res.status(403).json({ error: "forbidden" });
 
     const trip = await db.one(
-      `SELECT id, name, status, dest_lat, dest_lng, dest_name, created_at, all_arrived_at
+      `SELECT id, name, status, dest_lat, dest_lng, dest_name, created_at, all_arrived_at, ended_at
        FROM trips WHERE id = $1`,
       [tripId]
     );
     if (!trip) return res.status(404).json({ error: "trip_not_found" });
 
     const members = await db.many(
-      `SELECT m.id, m.line_user_id, m.display_name, m.picture_url, m.is_leader, m.arrived_at,
-              l.latitude, l.longitude, l.distance_km, l.created_at AS location_at
+      `SELECT m.id, m.line_user_id, m.display_name, m.picture_url,
+              m.is_leader, m.arrived_at, m.joined_at,
+              l.latitude, l.longitude, l.distance_km, l.accuracy_m,
+              l.created_at AS location_at
        FROM members m
        LEFT JOIN LATERAL (
-         SELECT latitude, longitude, distance_km, created_at
+         SELECT latitude, longitude, distance_km, accuracy_m, created_at
          FROM locations WHERE member_id = m.id
          ORDER BY created_at DESC LIMIT 1
        ) l ON true
        WHERE m.trip_id = $1
-       ORDER BY m.id`,
+       ORDER BY m.is_leader DESC, m.joined_at ASC`,
       [tripId]
     );
+
+    // Fetch leader location history for totalDistanceKm (capped at 500).
+    // If leaderLocs.length === 500 the value may be under-counted for very long trips.
+    const leaderLocs = await db.many(
+      `SELECT l.latitude, l.longitude
+       FROM locations l
+       JOIN members m ON m.id = l.member_id
+       WHERE l.trip_id = $1 AND m.is_leader = true
+       ORDER BY l.created_at ASC
+       LIMIT 500`,
+      [tripId]
+    );
+
+    let totalDistanceKm = null;
+    if (leaderLocs.length >= 2) {
+      let total = 0;
+      for (let i = 1; i < leaderLocs.length; i++) {
+        total += getDistance(
+          leaderLocs[i - 1].latitude, leaderLocs[i - 1].longitude,
+          leaderLocs[i].latitude,     leaderLocs[i].longitude
+        );
+      }
+      totalDistanceKm = parseFloat(total.toFixed(2));
+    }
+
+    const endTime = trip.ended_at ? new Date(trip.ended_at) : new Date();
+    const durationSeconds = Math.floor(
+      (endTime.getTime() - new Date(trip.created_at).getTime()) / 1000
+    );
+
+    const leaderMember = members.find(m => m.is_leader);
+    const leaderLoc = (leaderMember?.latitude != null)
+      ? { lat: leaderMember.latitude, lng: leaderMember.longitude }
+      : null;
 
     return res.json({
       trip: {
@@ -173,6 +209,9 @@ router.get("/:id", async (req, res) => {
           : null,
         createdAt: trip.created_at,
         allArrivedAt: trip.all_arrived_at || null,
+        endedAt: trip.ended_at || null,
+        durationSeconds,
+        totalDistanceKm,
       },
       members: members.map(m => ({
         id: String(m.id),
@@ -180,9 +219,21 @@ router.get("/:id", async (req, res) => {
         displayName: m.display_name,
         pictureUrl: m.picture_url || null,
         isLeader: m.is_leader,
+        joinedAt: m.joined_at,
         arrivedAt: m.arrived_at || null,
         lastLocation: m.latitude !== null
-          ? { lat: m.latitude, lng: m.longitude, distanceKm: m.distance_km, createdAt: m.location_at }
+          ? {
+              lat: m.latitude,
+              lng: m.longitude,
+              distanceKm: m.distance_km,
+              accuracyM: m.accuracy_m || null,
+              distanceFromLeaderKm: m.is_leader
+                ? 0.0
+                : (leaderLoc
+                    ? parseFloat(getDistance(m.latitude, m.longitude, leaderLoc.lat, leaderLoc.lng).toFixed(2))
+                    : null),
+              createdAt: m.location_at,
+            }
           : null,
       })),
     });
@@ -247,23 +298,25 @@ router.post("/:id/stop", async (req, res) => {
 
   try {
     const result = await db.query(
-      `UPDATE trips SET status = 'archived'
+      `UPDATE trips SET status = 'archived', ended_at = now()
        WHERE id = $1
          AND status = 'active'
          AND EXISTS (
            SELECT 1 FROM members
            WHERE trip_id = $1 AND line_user_id = $2 AND is_leader = true
          )
-       RETURNING id, status`,
+       RETURNING id, status, ended_at`,
       [tripId, req.user.lineUserId]
     );
 
     if (result.rows.length > 0) {
+      const { id, status, ended_at } = result.rows[0];
       return res.json({
         trip: {
-          id: String(result.rows[0].id),
-          status: result.rows[0].status,
-          stoppedAt: new Date().toISOString(),
+          id: String(id),
+          status,
+          stoppedAt: ended_at,
+          endedAt: ended_at,
         },
       });
     }
