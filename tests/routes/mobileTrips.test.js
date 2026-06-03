@@ -312,7 +312,7 @@ describe("POST /api/mobile/trips/:id/location", () => {
 
 describe("POST /api/mobile/trips/:id/stop", () => {
   test("200 -- archives trip and returns stoppedAt", async () => {
-    db.query.mockResolvedValueOnce({ rows: [{ id: TRIP_ID, status: "archived" }] });
+    db.query.mockResolvedValueOnce({ rows: [{ id: TRIP_ID, status: "archived", ended_at: new Date().toISOString() }] });
 
     const res = await request(app).post(`/api/mobile/trips/${TRIP_ID}/stop`).set(AUTH);
 
@@ -351,5 +351,187 @@ describe("POST /api/mobile/trips/:id/stop", () => {
   test("400 -- non-numeric trip id", async () => {
     const res = await request(app).post("/api/mobile/trips/abc/stop").set(AUTH);
     expect(res.status).toBe(400);
+  });
+});
+
+// ---- GET /api/mobile/trips/:id — Phase 5.4 enhanced fields ------------------
+
+describe("GET /api/mobile/trips/:id — enhanced fields (Phase 5.4)", () => {
+  const makeTripRow = (overrides = {}) => ({
+    id: 42,
+    name: "Test Trip",
+    status: "active",
+    dest_lat: null,
+    dest_lng: null,
+    dest_name: null,
+    created_at: new Date(Date.now() - 3600 * 1000).toISOString(),
+    all_arrived_at: null,
+    ended_at: null,
+    ...overrides,
+  });
+
+  const makeLeaderRow = (overrides = {}) => ({
+    id: 101,
+    line_user_id: "Uleader0001",
+    display_name: "ปอ",
+    picture_url: null,
+    is_leader: true,
+    arrived_at: null,
+    joined_at: new Date(Date.now() - 3600 * 1000).toISOString(),
+    latitude: 13.7563,
+    longitude: 100.5018,
+    distance_km: 2.1,
+    accuracy_m: 12.5,
+    location_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    ...overrides,
+  });
+
+  const makeMemberRow = (overrides = {}) => ({
+    id: 102,
+    line_user_id: "Umember0002",
+    display_name: "มี",
+    picture_url: null,
+    is_leader: false,
+    arrived_at: null,
+    joined_at: new Date(Date.now() - 3540 * 1000).toISOString(),
+    latitude: 13.7720,
+    longitude: 100.5050,
+    distance_km: 1.8,
+    accuracy_m: 20.0,
+    location_at: new Date(Date.now() - 90 * 1000).toISOString(),
+    ...overrides,
+  });
+
+  function setupGetTrip({ tripOverrides = {}, memberRows, leaderLocs = [] } = {}) {
+    db.one
+      .mockResolvedValueOnce({ id: 99 })
+      .mockResolvedValueOnce(makeTripRow(tripOverrides));
+    db.many
+      .mockResolvedValueOnce(memberRows)
+      .mockResolvedValueOnce(leaderLocs);
+  }
+
+  it("returns durationSeconds as a positive integer for active trip", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow()] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.trip.durationSeconds).toBe("number");
+    expect(res.body.trip.durationSeconds).toBeGreaterThan(0);
+  });
+
+  it("returns totalDistanceKm null when leader has fewer than 2 location points", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow()], leaderLocs: [{ latitude: 13.7563, longitude: 100.5018 }] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.trip.totalDistanceKm).toBeNull();
+  });
+
+  it("returns totalDistanceKm null when leader has no location points", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow()], leaderLocs: [] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.trip.totalDistanceKm).toBeNull();
+  });
+
+  it("returns totalDistanceKm as a number when leader has 2+ location points", async () => {
+    const leaderLocs = [
+      { latitude: 13.7563, longitude: 100.5018 },
+      { latitude: 13.7600, longitude: 100.5060 },
+    ];
+    setupGetTrip({ memberRows: [makeLeaderRow()], leaderLocs });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.trip.totalDistanceKm).toBe("number");
+    expect(res.body.trip.totalDistanceKm).toBeGreaterThan(0);
+  });
+
+  it("returns distanceFromLeaderKm as 0.0 for the leader member", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow()] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.members[0].isLeader).toBe(true);
+    expect(res.body.members[0].lastLocation.distanceFromLeaderKm).toBe(0.0);
+  });
+
+  it("returns distanceFromLeaderKm as a number for non-leader when leader has location", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow(), makeMemberRow()] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    const nonLeader = res.body.members.find(m => !m.isLeader);
+    expect(typeof nonLeader.lastLocation.distanceFromLeaderKm).toBe("number");
+    expect(nonLeader.lastLocation.distanceFromLeaderKm).toBeGreaterThanOrEqual(0);
+  });
+
+  it("returns distanceFromLeaderKm null for non-leader when leader has no location", async () => {
+    const leaderNoLoc = makeLeaderRow({ latitude: null, longitude: null, accuracy_m: null, location_at: null });
+    setupGetTrip({ memberRows: [leaderNoLoc, makeMemberRow()] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    const nonLeader = res.body.members.find(m => !m.isLeader);
+    expect(nonLeader.lastLocation.distanceFromLeaderKm).toBeNull();
+  });
+
+  it("returns accuracyM from the latest location row", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow({ accuracy_m: 12.5 })] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.members[0].lastLocation.accuracyM).toBe(12.5);
+  });
+
+  it("returns accuracyM null when accuracy_m is null", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow({ accuracy_m: null })] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.members[0].lastLocation.accuracyM).toBeNull();
+  });
+
+  it("returns joinedAt for each member", async () => {
+    const joined = new Date(Date.now() - 3600 * 1000).toISOString();
+    setupGetTrip({ memberRows: [makeLeaderRow({ joined_at: joined })] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.members[0].joinedAt).toBe(joined);
+  });
+
+  it("returns endedAt null for active trip", async () => {
+    setupGetTrip({ memberRows: [makeLeaderRow()] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.trip.endedAt).toBeNull();
+  });
+
+  it("returns endedAt as ISO string for archived trip", async () => {
+    const endedAt = new Date().toISOString();
+    setupGetTrip({
+      tripOverrides: { status: "archived", ended_at: endedAt },
+      memberRows: [makeLeaderRow()],
+    });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.trip.endedAt).toBe(endedAt);
+    expect(res.body.trip.status).toBe("archived");
+  });
+
+  it("lastLocation is null for member with no location", async () => {
+    const noLoc = makeLeaderRow({ latitude: null, longitude: null, accuracy_m: null, distance_km: null, location_at: null });
+    setupGetTrip({ memberRows: [noLoc] });
+    const res = await request(app).get("/api/mobile/trips/42").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.members[0].lastLocation).toBeNull();
+  });
+});
+
+// ---- POST /api/mobile/trips/:id/stop — Phase 5.4 endedAt field --------------
+
+describe("POST /api/mobile/trips/:id/stop — endedAt field (Phase 5.4)", () => {
+  it("returns endedAt matching stoppedAt in response", async () => {
+    const endedAt = new Date().toISOString();
+    db.query.mockResolvedValueOnce({
+      rows: [{ id: 42, status: "archived", ended_at: endedAt }],
+    });
+    const res = await request(app).post("/api/mobile/trips/42/stop").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.trip.endedAt).toBe(endedAt);
+    expect(res.body.trip.stoppedAt).toBe(endedAt);
   });
 });
