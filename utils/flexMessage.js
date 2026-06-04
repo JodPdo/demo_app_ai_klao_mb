@@ -19,7 +19,6 @@ const TEXT_SECONDARY = '#6B7280';
  */
 function buildTripDetailFlex({ tripId, tripName }) {
   const liffUrl = `https://liff.line.me/${LIFF_ID}?tripId=${encodeURIComponent(tripId)}`;
-  const appUrl = `aiklao://open?tripId=${encodeURIComponent(tripId)}`;
 
   return {
     type: 'flex',
@@ -68,15 +67,6 @@ function buildTripDetailFlex({ tripId, tripName }) {
               type: 'uri',
               label: 'ดูทริป (LIFF)',
               uri: liffUrl,
-            },
-          },
-          {
-            type: 'button',
-            style: 'secondary',
-            action: {
-              type: 'uri',
-              label: 'เปิดในแอป AiKlao',
-              uri: appUrl,
             },
           },
         ],
