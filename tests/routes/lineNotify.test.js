@@ -107,5 +107,7 @@ describe("POST /api/internal/line-notify", () => {
     expect(payload.to).toBe("Uabc123");
     expect(payload.messages[0].type).toBe("flex");
     expect(payload.messages[0].altText).toContain("Test Trip");
+    expect(payload.messages[0].contents.footer.contents).toHaveLength(1);
+    expect(payload.messages[0].contents.footer.contents[0].action.uri).toMatch(/liff.line.me/);
   });
 });
