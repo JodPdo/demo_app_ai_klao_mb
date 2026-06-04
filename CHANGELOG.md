@@ -1,3 +1,8 @@
+## [0.1.22] - 2026-06-04
+
+### 🐛 Bug Fixes
+
+- *(line)* Remove unsupported custom URI scheme from Flex Message
 ## [0.1.21] - 2026-06-04
 
 ### 🚀 Features
