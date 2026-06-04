@@ -1,3 +1,8 @@
+## [0.1.21] - 2026-06-04
+
+### 🚀 Features
+
+- *(line)* Phase 5.6 Session B+ — LINE Bot Push endpoint
 ## [0.1.20] - 2026-06-04
 
 ### 🚀 Features

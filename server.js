@@ -114,6 +114,12 @@ app.use("/api/liff", liffConfig);
 app.use("/api/liff", liffInit);
 
 /* =========================
+   🔐 INTERNAL ROUTES (X-Internal-Secret header)
+========================= */
+const lineNotify = require("./routes/lineNotify");
+app.use("/api/internal", lineNotify);
+
+/* =========================
    ❌ 404 + Error handler
 ========================= */
 app.use((req, res) => {
