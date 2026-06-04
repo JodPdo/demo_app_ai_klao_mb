@@ -24,7 +24,12 @@ jest.mock("../../utils/distance", () => ({
 }));
 
 jest.mock("../../middleware/jwtAuth", () => (req, _res, next) => {
-  req.user = { id: "1", lineUserId: "Utest01", displayName: "Test User" };
+  req.user = { id: "1", lineUserId: "Utest01", displayName: "Test User", source: "mobile" };
+  next();
+});
+
+jest.mock("../../middleware/dualAuth", () => (req, _res, next) => {
+  req.user = { id: "1", lineUserId: "Utest01", displayName: "Test User", source: "mobile" };
   next();
 });
 

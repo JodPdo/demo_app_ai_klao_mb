@@ -1,21 +1,24 @@
 // routes/mobileTrips.js
-// JWT-protected trip endpoints for the mobile app (Phase 5.2)
+// Trip endpoints for mobile app and LIFF WebView (Phase 5.2 + Phase 5.6 dualAuth)
 //
 // Mounted in server.js:
-//   app.use("/api/mobile/trips", jwtAuth, mobileTrips);  <- BEFORE the /api/mobile catch-all
+//   app.use("/api/mobile/trips", mobileTrips);  <- per-route auth inside this file
 //
-// req.user = { id, lineUserId, displayName } -- injected by jwtAuth
+// req.user = { id, lineUserId, displayName, source: 'mobile'|'liff' }
+// injected by jwtAuth (mobile) or dualAuth (LIFF)
 
 const express = require("express");
 const db = require("../lib/db");
 const logger = require("../lib/logger");
 const { getDistance } = require("../utils/distance");
+const jwtAuth = require("../middleware/jwtAuth");
+const dualAuth = require("../middleware/dualAuth");
 
 const router = express.Router();
 
 // ---- POST /api/mobile/trips/start ------------------------------------------
 
-router.post("/start", async (req, res) => {
+router.post("/start", jwtAuth, async (req, res) => {
   const { name, destination } = req.body || {};
 
   let destLat = null, destLng = null, destName = null;
@@ -96,7 +99,7 @@ router.post("/start", async (req, res) => {
 
 // ---- GET /api/mobile/trips -------------------------------------------------
 
-router.get("/", async (req, res) => {
+router.get("/", dualAuth, async (req, res) => {
   try {
     const rows = await db.many(
       `SELECT t.id, t.name, t.status, t.dest_lat, t.dest_lng, t.dest_name, t.created_at,
@@ -131,7 +134,7 @@ router.get("/", async (req, res) => {
 
 // ---- GET /api/mobile/trips/:id ---------------------------------------------
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", dualAuth, async (req, res) => {
   const tripId = parseInt(req.params.id, 10);
   if (!Number.isFinite(tripId)) return res.status(400).json({ error: "invalid_trip_id" });
 
@@ -245,7 +248,7 @@ router.get("/:id", async (req, res) => {
 
 // ---- POST /api/mobile/trips/:id/location -----------------------------------
 
-router.post("/:id/location", async (req, res) => {
+router.post("/:id/location", jwtAuth, async (req, res) => {
   const tripId = parseInt(req.params.id, 10);
   if (!Number.isFinite(tripId)) return res.status(400).json({ error: "invalid_trip_id" });
 
@@ -292,7 +295,7 @@ router.post("/:id/location", async (req, res) => {
 
 // ---- POST /api/mobile/trips/:id/stop ---------------------------------------
 
-router.post("/:id/stop", async (req, res) => {
+router.post("/:id/stop", dualAuth, async (req, res) => {
   const tripId = parseInt(req.params.id, 10);
   if (!Number.isFinite(tripId)) return res.status(400).json({ error: "invalid_trip_id" });
 

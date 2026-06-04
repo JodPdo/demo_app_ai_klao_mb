@@ -14,6 +14,7 @@ require("dotenv").config();
 const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const pinoHttp = require("pino-http");
 
@@ -30,13 +31,20 @@ app.set("trust proxy", 1);
 
 app.use(helmet());
 
-app.use(
-  cors({
-    origin: true,
-    credentials: false,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  })
-);
+const corsOptions = {
+  origin: (origin, callback) => {
+    const allowed = (process.env.ALLOWED_ORIGINS || "").split(",").filter(Boolean);
+    const liffOrigin = "https://liff.line.me";
+    const mbOrigin = "https://mb.aiklaotrip.com";
+    if (!origin || allowed.includes(origin) || origin === liffOrigin || origin === mbOrigin) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  credentials: true,
+};
+app.use(cors(corsOptions));
 
 app.use(
   pinoHttp({
@@ -54,6 +62,8 @@ app.use(
 );
 
 app.use(express.json({ limit: "10kb" }));
+
+app.use(cookieParser());
 
 app.use(
   rateLimit({
@@ -92,8 +102,16 @@ app.use("/api/mobile/oauth", oauthCallback);
 /* =========================
    🔐 PROTECTED ROUTES
 ========================= */
-app.use("/api/mobile/trips", jwtAuth, mobileTrips);
+app.use("/api/mobile/trips", mobileTrips);
 app.use("/api/mobile", jwtAuth, mobileMe);
+
+/* =========================
+   🔐 LIFF ROUTES (dualAuth inside router)
+========================= */
+const liffConfig = require("./routes/liffConfig");
+const liffInit = require("./routes/liffInit");
+app.use("/api/liff", liffConfig);
+app.use("/api/liff", liffInit);
 
 /* =========================
    ❌ 404 + Error handler

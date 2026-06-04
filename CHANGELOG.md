@@ -1,3 +1,8 @@
+## [0.1.20] - 2026-06-04
+
+### 🚀 Features
+
+- *(liff)* Phase 5.6 Session B — dualAuth + LIFF session endpoints
 ## [0.1.19] - 2026-06-03
 
 ### 🚀 Features
