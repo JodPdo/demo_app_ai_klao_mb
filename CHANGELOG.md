@@ -1,3 +1,8 @@
+## [0.1.23] - 2026-06-05
+
+### 🚀 Features
+
+- *(phase-6.2-A)* SOS endpoints + sos_events table + LINE Push
 ## [0.1.22] - 2026-06-04
 
 ### 🐛 Bug Fixes

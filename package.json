@@ -1,6 +1,6 @@
 {
   "name": "aiklao-bot",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "LINE bot + LIFF map + destination picker (PostgreSQL + Docker)",
   "main": "server.js",
   "scripts": {
