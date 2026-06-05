@@ -1,3 +1,8 @@
+## [0.1.24] - 2026-06-05
+
+### 🚀 Features
+
+- *(phase-6.5-A)* Per-member arrival detection + SOS auto-clear
 ## [0.1.23] - 2026-06-05
 
 ### 🚀 Features
