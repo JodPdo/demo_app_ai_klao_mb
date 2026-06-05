@@ -11,13 +11,17 @@ const express = require("express");
 const db = require("../lib/db");
 const logger = require("../lib/logger");
 const { getDistance } = require("../utils/distance");
-const { buildSosFlex } = require("../utils/flexMessage");
+const { buildSosFlex, buildArrivalFlex } = require("../utils/flexMessage");
 const jwtAuth = require("../middleware/jwtAuth");
 const dualAuth = require("../middleware/dualAuth");
 
 const router = express.Router();
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
+
+// Phase 6.5 — arrival detection thresholds
+const ARRIVAL_RADIUS_M = 100;   // within this distance of destination = arrived
+const MAX_ACCURACY_M = 50;      // skip arrival if GPS accuracy worse than this (or null)
 
 // Push a single Flex message to one LINE user. Resolves on 2xx, rejects otherwise.
 // Mirrors routes/lineNotify.js (Phase 5.6 B+) — no shared lib helper exists.
@@ -37,6 +41,94 @@ async function pushFlexToLine(lineUserId, flexMessage) {
     throw new Error(`LINE push ${res.status}: ${text}`);
   }
   return true;
+}
+
+/**
+ * Phase 6.5 — per-member arrival detection. Called inside the POST /location
+ * db.tx, after the location insert. Idempotent (WHERE arrived_at IS NULL).
+ *
+ * @param q       tx query fn
+ * @param tripId  number
+ * @param member  { id, arrived_at } row
+ * @param lat,lng number — the just-posted coordinates
+ * @param accuracyM number|null — GPS accuracy (from req.body.accuracy)
+ * @param userId  number — users.id (req.user.id), for SOS auto-cancel
+ */
+async function checkArrival(q, tripId, member, lat, lng, accuracyM, userId) {
+  if (member.arrived_at !== null) return { arrived: false, reason: "already_arrived" };
+
+  // GPS accuracy guard — fail-safe on null or > 50m (avoids false arrivals)
+  if (accuracyM == null || accuracyM > MAX_ACCURACY_M) {
+    return { arrived: false, reason: "poor_accuracy", accuracyM };
+  }
+
+  const tripRes = await q(`SELECT dest_lat, dest_lng, name FROM trips WHERE id = $1`, [tripId]);
+  const trip = tripRes.rows[0];
+  if (!trip || trip.dest_lat == null || trip.dest_lng == null) {
+    return { arrived: false, reason: "no_destination" };
+  }
+
+  // getDistance returns kilometres → convert to metres
+  const distanceM = getDistance(lat, lng, trip.dest_lat, trip.dest_lng) * 1000;
+  if (distanceM > ARRIVAL_RADIUS_M) return { arrived: false, distanceM };
+
+  // Race-safe mark: only the POST that flips NULL→now() "wins"
+  const updated = await q(
+    `UPDATE members SET arrived_at = now()
+     WHERE id = $1 AND arrived_at IS NULL
+     RETURNING arrived_at`,
+    [member.id]
+  );
+  if (updated.rowCount === 0) return { arrived: false, reason: "race_loss" };
+
+  // Auto-cancel any active SOS for this user on this trip. members has no
+  // user_id column, so we use userId (= req.user.id = users.id) to match
+  // sos_events.user_id (FK to users.id).
+  const sosCanceled = await q(
+    `UPDATE sos_events SET cancelled_at = now(), cancelled_by = $1
+     WHERE trip_id = $2 AND user_id = $1 AND cancelled_at IS NULL
+     RETURNING id`,
+    [userId, tripId]
+  );
+
+  return {
+    arrived: true,
+    arrivedAt: updated.rows[0].arrived_at,
+    distanceM,
+    tripName: trip.name,
+    sosAutoCancelled: sosCanceled.rows.map(r => String(r.id)),
+  };
+}
+
+/**
+ * Phase 6.5 — best-effort LINE push to OTHER members when someone arrives.
+ * Fires outside the TX (push failure must not roll back the arrival).
+ */
+async function sendArrivalPush(tripId, user, arrivalResult) {
+  const recipients = await db.many(
+    `SELECT line_user_id FROM members
+     WHERE trip_id = $1 AND line_user_id <> $2 AND line_user_id IS NOT NULL`,
+    [tripId, user.lineUserId]
+  );
+  if (recipients.length === 0) return;
+
+  const timeHHMM = new Date(arrivalResult.arrivedAt).toLocaleTimeString("th-TH", {
+    timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+  const flex = buildArrivalFlex({
+    memberName: user.displayName || "สมาชิก",
+    tripName: arrivalResult.tripName,
+    tripId: String(tripId),
+    timeHHMM,
+  });
+
+  const results = await Promise.allSettled(
+    recipients.map(r => pushFlexToLine(r.line_user_id, flex))
+  );
+  const failed = results.filter(r => r.status === "rejected").length;
+  if (failed > 0) {
+    logger.warn({ tripId, failed, total: recipients.length }, "[arrival] some pushes failed");
+  }
 }
 
 // ---- POST /api/mobile/trips/start ------------------------------------------
@@ -319,20 +411,43 @@ router.post("/:id/location", jwtAuth, async (req, res) => {
       ? getDistance(lat, lng, trip.dest_lat, trip.dest_lng)
       : null;
 
-    // locations.trip_id is NOT NULL (no default) -- must include in INSERT
-    // source='mobile' distinguishes these from LINE bot locations (default 'line')
-    const result = await db.query(
-      `INSERT INTO locations (trip_id, member_id, latitude, longitude, distance_km, accuracy_m, source, created_at)
-       SELECT m.trip_id, m.id, $1, $2, $3, $4, 'mobile', COALESCE($5::timestamptz, NOW())
-       FROM members m
-       WHERE m.trip_id = $6 AND m.line_user_id = $7
-       RETURNING id`,
-      [lat, lng, distanceKm, accuracyM, timestamp, tripId, req.user.lineUserId]
-    );
+    // Atomic: member lookup + location INSERT + arrival mark + SOS auto-cancel.
+    // A crash mid-sequence rolls back together (no half-applied arrival).
+    const txResult = await db.tx(async (q) => {
+      // Membership + arrived_at (members carries arrival state, keyed by line_user_id)
+      const memberRes = await q(
+        `SELECT id, arrived_at FROM members WHERE trip_id = $1 AND line_user_id = $2`,
+        [tripId, req.user.lineUserId]
+      );
+      const member = memberRes.rows[0];
+      if (!member) return { forbidden: true };
 
-    if (result.rows.length === 0) return res.status(403).json({ error: "forbidden" });
+      // locations.trip_id is NOT NULL -- include explicitly.
+      // source='mobile' distinguishes from LINE bot locations (default 'line')
+      const ins = await q(
+        `INSERT INTO locations (trip_id, member_id, latitude, longitude, distance_km, accuracy_m, source, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'mobile', COALESCE($7::timestamptz, NOW()))
+         RETURNING id`,
+        [tripId, member.id, lat, lng, distanceKm, accuracyM, timestamp]
+      );
 
-    return res.status(201).json({ ok: true, locationId: String(result.rows[0].id) });
+      const arrival = await checkArrival(q, tripId, member, lat, lng, accuracyM, req.user.id);
+      return { locationId: ins.rows[0].id, arrival };
+    });
+
+    if (txResult.forbidden) return res.status(403).json({ error: "forbidden" });
+
+    res.status(201).json({ ok: true, locationId: String(txResult.locationId) });
+
+    // Best-effort arrival push AFTER the response (must not delay /location).
+    if (txResult.arrival.arrived) {
+      setImmediate(() => {
+        sendArrivalPush(tripId, req.user, txResult.arrival).catch((err) =>
+          logger.warn({ reqId: req.id, err: err.message, tripId }, "[arrival] push failed")
+        );
+      });
+    }
+    return;
   } catch (err) {
     logger.error({ reqId: req.id, err: err.message }, "[mobile-trips] location push failed");
     return res.status(500).json({ error: "db_error" });
