@@ -4,6 +4,7 @@
 // Uses LINE Messaging API Push (not webhook) — avoids conflict with aiklao_be.
 
 const express = require('express');
+const crypto = require('crypto');
 const logger = require('../lib/logger');
 const { buildTripDetailFlex } = require('../utils/flexMessage');
 
@@ -14,12 +15,28 @@ const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET;
 
 router.post('/line-notify', async (req, res) => {
-  // Auth — shared secret header
+  // Auth — constant-time shared secret comparison (SEC-003)
   if (!INTERNAL_SECRET) {
+    logger.error('[line-notify] INTERNAL_SECRET not configured');
     return res.status(503).json({ error: 'internal_endpoint_disabled' });
   }
-  const provided = req.get('x-internal-secret');
-  if (!provided || provided !== INTERNAL_SECRET) {
+
+  const provided = req.get('x-internal-secret') || '';
+
+  // GUARD: confirm INTERNAL_SECRET is a non-empty string BEFORE Buffer.from
+  // (Buffer.from(undefined, 'utf8') throws at runtime)
+  if (typeof INTERNAL_SECRET !== 'string' || INTERNAL_SECRET.length === 0) {
+    logger.error('[line-notify] INTERNAL_SECRET invalid type or empty');
+    return res.status(503).json({ error: 'internal_endpoint_disabled' });
+  }
+
+  const providedBuf = Buffer.from(provided, 'utf8');
+  const expectedBuf = Buffer.from(INTERNAL_SECRET, 'utf8');
+
+  if (
+    providedBuf.length !== expectedBuf.length ||
+    !crypto.timingSafeEqual(providedBuf, expectedBuf)
+  ) {
     return res.status(401).json({ error: 'invalid_internal_secret' });
   }
 
@@ -56,6 +73,7 @@ router.post('/line-notify', async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),   // SEC-004 — 5s timeout
     });
 
     if (!pushRes.ok) {
@@ -73,6 +91,10 @@ router.post('/line-notify', async (req, res) => {
     logger.info({ reqId: req.id, lineUserId, tripId }, '[line-notify] push sent');
     return res.json({ ok: true, lineUserId, tripId });
   } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      logger.warn({ reqId: req.id }, '[line-notify] LINE push timeout (5s)');
+      return res.status(504).json({ error: 'line_push_timeout' });
+    }
     logger.error({ reqId: req.id, err: err.message }, '[line-notify] failed');
     return res.status(500).json({ error: 'line_notify_failed' });
   }

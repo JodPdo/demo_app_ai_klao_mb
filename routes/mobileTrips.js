@@ -35,6 +35,7 @@ async function pushFlexToLine(lineUserId, flexMessage) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ to: lineUserId, messages: [flexMessage] }),
+    signal: AbortSignal.timeout(5000),   // SEC-004 — 5s timeout
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -456,7 +457,7 @@ router.post("/:id/location", jwtAuth, async (req, res) => {
 
 // ---- POST /api/mobile/trips/:id/stop ---------------------------------------
 
-router.post("/:id/stop", dualAuth, async (req, res) => {
+router.post("/:id/stop", jwtAuth, async (req, res) => {
   const tripId = parseInt(req.params.id, 10);
   if (!Number.isFinite(tripId)) return res.status(400).json({ error: "invalid_trip_id" });
 

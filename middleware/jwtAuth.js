@@ -30,6 +30,7 @@ function jwtAuth(req, res, next) {
     const payload = jwt.verify(match[1], JWT_SECRET, {
       issuer: "aiklao",
       audience: "aiklao-mobile",
+      algorithms: ["HS256"],
     });
     req.user = {
       id: payload.sub,
