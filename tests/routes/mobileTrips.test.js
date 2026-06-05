@@ -540,3 +540,157 @@ describe("POST /api/mobile/trips/:id/stop — endedAt field (Phase 5.4)", () => 
     expect(res.body.trip.stoppedAt).toBe(endedAt);
   });
 });
+
+// ---- Phase 6.2 Session A — SOS endpoints -----------------------------------
+
+describe("GET /api/mobile/trips/:id — activeSos field (Phase 6.2)", () => {
+  test("defaults to empty array when no active SOS", async () => {
+    db.one.mockResolvedValueOnce({ id: 20 }).mockResolvedValueOnce(fakeCreatedTrip);
+    db.many.mockResolvedValueOnce([fakeMember]); // members; leaderLocs + activeSos -> default []
+    const res = await request(app).get(`/api/mobile/trips/${TRIP_ID}`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.activeSos)).toBe(true);
+    expect(res.body.activeSos).toHaveLength(0);
+  });
+
+  test("returns camelCase SOS entries when active SOS exists", async () => {
+    db.one.mockResolvedValueOnce({ id: 20 }).mockResolvedValueOnce(fakeCreatedTrip);
+    db.many
+      .mockResolvedValueOnce([fakeMember])  // members
+      .mockResolvedValueOnce([])            // leaderLocs
+      .mockResolvedValueOnce([{            // activeSos (aliased camelCase from SQL)
+        id: 99, userId: 7, displayName: "ปอ",
+        pictureUrl: "https://profile.line-scdn.net/x", lat: 15.6, lng: 103.4,
+        triggeredAt: new Date("2026-06-05T06:22:14Z"),
+      }]);
+    const res = await request(app).get(`/api/mobile/trips/${TRIP_ID}`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.activeSos).toHaveLength(1);
+    expect(res.body.activeSos[0]).toMatchObject({
+      id: "99", userId: "7", displayName: "ปอ", lat: 15.6, lng: 103.4,
+    });
+  });
+});
+
+describe("POST /api/mobile/trips/:id/sos (Phase 6.2)", () => {
+  beforeEach(() => {
+    process.env.CHANNEL_ACCESS_TOKEN = "test-channel-access-token";
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+  });
+
+  test("200 -- fires SOS, no recipients", async () => {
+    db.one
+      .mockResolvedValueOnce({ id: 20 })           // membership
+      .mockResolvedValueOnce({ id: 7, name: "T" }); // trip
+    db.tx.mockResolvedValueOnce({ duplicate: false, row: { id: 99, triggered_at: new Date() } });
+    db.many.mockResolvedValueOnce([]);             // recipients
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/sos`)
+      .set(AUTH)
+      .send({ lat: 15.6, lng: 103.4, accuracy_m: 12.5 });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.sos).toMatchObject({ id: "99", tripId: "7", userId: "1", pushSentCount: 0 });
+  });
+
+  test("200 -- tallies push results across recipients", async () => {
+    db.one
+      .mockResolvedValueOnce({ id: 20 })
+      .mockResolvedValueOnce({ id: 7, name: "T" });
+    db.tx.mockResolvedValueOnce({ duplicate: false, row: { id: 99, triggered_at: new Date() } });
+    db.many.mockResolvedValueOnce([{ line_user_id: "Ua" }, { line_user_id: "Ub" }]);
+    global.fetch
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => "bad" });
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/sos`)
+      .set(AUTH)
+      .send({ lat: 15.6, lng: 103.4 });
+    expect(res.status).toBe(200);
+    expect(res.body.sos.pushSentCount).toBe(1);
+    expect(res.body.sos.pushFailedCount).toBe(1);
+  });
+
+  test("409 -- duplicate active SOS", async () => {
+    db.one
+      .mockResolvedValueOnce({ id: 20 })
+      .mockResolvedValueOnce({ id: 7, name: "T" });
+    db.tx.mockResolvedValueOnce({ duplicate: true, existingId: 42 });
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/sos`)
+      .set(AUTH)
+      .send({ lat: 15.6, lng: 103.4 });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ ok: false, code: "ACTIVE_SOS_EXISTS", existing: { id: "42" } });
+  });
+
+  test("409 -- race condition caught by unique constraint (23505)", async () => {
+    db.one
+      .mockResolvedValueOnce({ id: 20 })            // membership
+      .mockResolvedValueOnce({ id: 7, name: "T" }); // trip
+    // TX passes the FOR UPDATE dedupe but the INSERT hits the unique index
+    db.tx.mockImplementation(async () => {
+      const err = new Error("duplicate key value violates unique constraint");
+      err.code = "23505";
+      err.constraint = "idx_sos_one_active_per_user";
+      throw err;
+    });
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/sos`)
+      .set(AUTH)
+      .send({ lat: 15.6, lng: 103.4 });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ ok: false, code: "ACTIVE_SOS_EXISTS" });
+  });
+
+  test("403 -- not a trip member", async () => {
+    db.one.mockResolvedValueOnce(null); // membership fails
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/sos`)
+      .set(AUTH)
+      .send({ lat: 15.6, lng: 103.4 });
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: "not_member" });
+  });
+
+  test("400 -- invalid lat/lng", async () => {
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/sos`)
+      .set(AUTH)
+      .send({ lat: 999, lng: 103.4 });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: "invalid_lat_lng" });
+  });
+});
+
+describe("POST /api/mobile/trips/:id/sos/:sosId/cancel (Phase 6.2)", () => {
+  test("200 -- sender cancels own SOS", async () => {
+    db.one.mockResolvedValueOnce({ id: 42, trip_id: 7, user_id: "1", cancelled_at: null });
+    const cancelledAt = new Date().toISOString();
+    db.query.mockResolvedValueOnce({ rows: [{ cancelled_at: cancelledAt }] });
+    const res = await request(app).post(`/api/mobile/trips/7/sos/42/cancel`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, sosId: "42", cancelledAt });
+  });
+
+  test("403 -- non-sender cannot cancel", async () => {
+    db.one.mockResolvedValueOnce({ id: 42, trip_id: 7, user_id: "999", cancelled_at: null });
+    const res = await request(app).post(`/api/mobile/trips/7/sos/42/cancel`).set(AUTH);
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "NOT_SENDER" });
+  });
+
+  test("409 -- already cancelled", async () => {
+    db.one.mockResolvedValueOnce({ id: 42, trip_id: 7, user_id: "1", cancelled_at: new Date() });
+    const res = await request(app).post(`/api/mobile/trips/7/sos/42/cancel`).set(AUTH);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "ALREADY_CANCELLED" });
+  });
+
+  test("404 -- sos not found / wrong trip", async () => {
+    db.one.mockResolvedValueOnce({ id: 42, trip_id: 999, user_id: "1", cancelled_at: null });
+    const res = await request(app).post(`/api/mobile/trips/7/sos/42/cancel`).set(AUTH);
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ code: "SOS_NOT_FOUND" });
+  });
+});

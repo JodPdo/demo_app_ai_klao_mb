@@ -11,10 +11,33 @@ const express = require("express");
 const db = require("../lib/db");
 const logger = require("../lib/logger");
 const { getDistance } = require("../utils/distance");
+const { buildSosFlex } = require("../utils/flexMessage");
 const jwtAuth = require("../middleware/jwtAuth");
 const dualAuth = require("../middleware/dualAuth");
 
 const router = express.Router();
+
+const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
+
+// Push a single Flex message to one LINE user. Resolves on 2xx, rejects otherwise.
+// Mirrors routes/lineNotify.js (Phase 5.6 B+) — no shared lib helper exists.
+async function pushFlexToLine(lineUserId, flexMessage) {
+  const token = process.env.CHANNEL_ACCESS_TOKEN;
+  if (!token) throw new Error("CHANNEL_ACCESS_TOKEN not set");
+  const res = await fetch(LINE_PUSH_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ to: lineUserId, messages: [flexMessage] }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`LINE push ${res.status}: ${text}`);
+  }
+  return true;
+}
 
 // ---- POST /api/mobile/trips/start ------------------------------------------
 
@@ -202,7 +225,30 @@ router.get("/:id", dualAuth, async (req, res) => {
       ? { lat: leaderMember.latitude, lng: leaderMember.longitude }
       : null;
 
+    // Active (uncancelled) SOS events for this trip. camelCase aliases so the
+    // mobile client can consume directly (Phase 6.1A convention). Always an
+    // array — never null/undefined (mobile does .find()/.map() on it).
+    const activeSosRows = await db.many(
+      `SELECT s.id, s.user_id AS "userId", u.display_name AS "displayName",
+              u.picture_url AS "pictureUrl", s.lat, s.lng, s.triggered_at AS "triggeredAt"
+       FROM sos_events s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.trip_id = $1 AND s.cancelled_at IS NULL
+       ORDER BY s.triggered_at DESC`,
+      [tripId]
+    );
+    const activeSos = (activeSosRows ?? []).map(r => ({
+      id: String(r.id),
+      userId: String(r.userId),
+      displayName: r.displayName,
+      pictureUrl: r.pictureUrl || null,
+      lat: r.lat,
+      lng: r.lng,
+      triggeredAt: r.triggeredAt,
+    }));
+
     return res.json({
+      activeSos,
       trip: {
         id: String(trip.id),
         name: trip.name,
@@ -331,6 +377,170 @@ router.post("/:id/stop", dualAuth, async (req, res) => {
     return res.status(403).json({ error: "not_leader" });
   } catch (err) {
     logger.error({ reqId: req.id, err: err.message }, "[mobile-trips] stop trip failed");
+    return res.status(500).json({ error: "db_error" });
+  }
+});
+
+// ---- POST /api/mobile/trips/:id/sos ----------------------------------------
+// Fire an SOS. jwtAuth only (mobile is the sole trigger — Pattern A spirit:
+// SOS originates from the device, like location). Writes to sos_events, NOT
+// to the locations stream, so the locations writer invariant is untouched.
+
+router.post("/:id/sos", jwtAuth, async (req, res) => {
+  const tripId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(tripId)) return res.status(400).json({ error: "invalid_trip_id" });
+
+  const lat = Number(req.body?.lat);
+  const lng = Number(req.body?.lng);
+  if (!isFinite(lat) || !isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return res.status(400).json({ error: "invalid_lat_lng" });
+  }
+  const accuracyM = (typeof req.body?.accuracy_m === "number" && isFinite(req.body.accuracy_m))
+    ? req.body.accuracy_m : null;
+
+  try {
+    // Membership + trip name (members carries the membership; trips the name)
+    const membership = await db.one(
+      `SELECT m.id FROM members m WHERE m.trip_id = $1 AND m.line_user_id = $2`,
+      [tripId, req.user.lineUserId]
+    );
+    if (!membership) return res.status(403).json({ error: "not_member" });
+
+    const trip = await db.one(`SELECT id, name FROM trips WHERE id = $1`, [tripId]);
+    if (!trip) return res.status(404).json({ error: "trip_not_found" });
+
+    // Atomic dedupe + insert: SELECT ... FOR UPDATE inside a TX prevents two
+    // concurrent SOS attempts from both passing the dedupe check.
+    const txResult = await db.tx(async (q) => {
+      const dup = await q(
+        `SELECT id FROM sos_events
+         WHERE trip_id = $1 AND user_id = $2 AND cancelled_at IS NULL
+         LIMIT 1 FOR UPDATE`,
+        [tripId, req.user.id]
+      );
+      if (dup.rows.length > 0) {
+        return { duplicate: true, existingId: dup.rows[0].id };
+      }
+      const inserted = await q(
+        `INSERT INTO sos_events (trip_id, user_id, lat, lng, accuracy_m)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, triggered_at`,
+        [tripId, req.user.id, lat, lng, accuracyM]
+      );
+      return { duplicate: false, row: inserted.rows[0] };
+    });
+
+    if (txResult.duplicate) {
+      return res.status(409).json({
+        ok: false,
+        code: "ACTIVE_SOS_EXISTS",
+        existing: { id: String(txResult.existingId) },
+      });
+    }
+
+    const sosId = txResult.row.id;
+    const triggeredAt = txResult.row.triggered_at;
+
+    // Recipients: other members of this trip with a LINE id (exclude sender).
+    // members.line_user_id IS the LINE push target — no users join needed.
+    const recipients = await db.many(
+      `SELECT line_user_id FROM members
+       WHERE trip_id = $1 AND line_user_id <> $2 AND line_user_id IS NOT NULL`,
+      [tripId, req.user.lineUserId]
+    );
+
+    // Best-effort Push (NOT in the TX — a push failure must not undo the SOS).
+    const timeHHMM = new Date(triggeredAt).toLocaleTimeString("th-TH", {
+      timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+    const flex = buildSosFlex({
+      senderName: req.user.displayName || "สมาชิก",
+      lat, lng, timeHHMM, tripName: trip.name, tripId: String(tripId),
+    });
+
+    let sent = 0, failed = 0;
+    if (recipients.length > 0) {
+      const results = await Promise.allSettled(
+        recipients.map(r => pushFlexToLine(r.line_user_id, flex))
+      );
+      results.forEach(r => { r.status === "fulfilled" ? sent++ : failed++; });
+      if (failed > 0) {
+        logger.warn({ reqId: req.id, sosId: String(sosId), sent, failed }, "[sos] some pushes failed");
+      }
+    }
+
+    // Update tally. If the process crashes before this, the SOS row still
+    // exists; only the counts stay 0 — acceptable trade-off (documented).
+    await db.query(
+      `UPDATE sos_events SET push_sent_count = $1, push_failed_count = $2 WHERE id = $3`,
+      [sent, failed, sosId]
+    );
+
+    return res.json({
+      ok: true,
+      sos: {
+        id: String(sosId),
+        tripId: String(tripId),
+        userId: String(req.user.id),
+        lat, lng,
+        triggeredAt,
+        pushSentCount: sent,
+        pushFailedCount: failed,
+      },
+    });
+  } catch (err) {
+    // Concurrent SOS race — slipped past the TX dedupe, caught by the unique
+    // partial index idx_sos_one_active_per_user. Convert to the same 409 the
+    // app-level dedupe returns, so the client sees a consistent contract.
+    if (err.code === "23505" && /sos_one_active/.test(err.constraint || "")) {
+      logger.warn(
+        { reqId: req.id, tripId, userId: req.user.id },
+        "[sos] race condition caught by unique index — converting to 409"
+      );
+      return res.status(409).json({ ok: false, code: "ACTIVE_SOS_EXISTS" });
+    }
+    logger.error({ reqId: req.id, err: err.message }, "[mobile-trips] sos failed");
+    return res.status(500).json({ error: "db_error" });
+  }
+});
+
+// ---- POST /api/mobile/trips/:id/sos/:sosId/cancel --------------------------
+// Sender-only cancel. Other members cannot cancel someone else's SOS.
+
+router.post("/:id/sos/:sosId/cancel", jwtAuth, async (req, res) => {
+  const tripId = parseInt(req.params.id, 10);
+  const sosId = parseInt(req.params.sosId, 10);
+  if (!Number.isFinite(tripId)) return res.status(400).json({ error: "invalid_trip_id" });
+  if (!Number.isFinite(sosId)) return res.status(400).json({ error: "invalid_sos_id" });
+
+  try {
+    const sos = await db.one(
+      `SELECT id, trip_id, user_id, cancelled_at FROM sos_events WHERE id = $1`,
+      [sosId]
+    );
+    if (!sos || Number(sos.trip_id) !== tripId) {
+      return res.status(404).json({ ok: false, code: "SOS_NOT_FOUND" });
+    }
+    if (sos.cancelled_at !== null) {
+      return res.status(409).json({ ok: false, code: "ALREADY_CANCELLED" });
+    }
+    if (Number(sos.user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ ok: false, code: "NOT_SENDER" });
+    }
+
+    const updated = await db.query(
+      `UPDATE sos_events SET cancelled_at = now(), cancelled_by = $1
+       WHERE id = $2 RETURNING cancelled_at`,
+      [req.user.id, sosId]
+    );
+
+    return res.json({
+      ok: true,
+      sosId: String(sosId),
+      cancelledAt: updated.rows[0].cancelled_at,
+    });
+  } catch (err) {
+    logger.error({ reqId: req.id, err: err.message }, "[mobile-trips] sos cancel failed");
     return res.status(500).json({ error: "db_error" });
   }
 });
