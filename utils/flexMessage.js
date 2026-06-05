@@ -137,7 +137,66 @@ function buildSosFlex({ senderName, lat, lng, timeHHMM, tripName, tripId }) {
   };
 }
 
+/**
+ * Arrival notification Flex Message (Phase 6.5). Green bubble with a single
+ * HTTPS LIFF button (custom schemes are rejected by LINE Push).
+ *
+ * @param {object} params
+ * @param {string} params.memberName - display name of the member who arrived
+ * @param {string} params.tripName
+ * @param {string} params.tripId
+ * @param {string} params.timeHHMM - pre-formatted local time (e.g. "13:22")
+ * @returns {object} LINE Messaging API message
+ */
+function buildArrivalFlex({ memberName, tripName, tripId, timeHHMM }) {
+  return {
+    type: 'flex',
+    altText: `✅ ${memberName} ถึงจุดหมายแล้ว`,
+    contents: {
+      type: 'bubble',
+      size: 'kilo',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#10B981',
+        paddingAll: '12px',
+        contents: [
+          { type: 'text', text: '✅ ARRIVED', color: '#FFFFFF', weight: 'bold', size: 'lg' },
+        ],
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'sm',
+        contents: [
+          { type: 'text', text: `${memberName} ถึงจุดหมายแล้ว`, wrap: true, weight: 'bold' },
+          { type: 'separator' },
+          { type: 'text', text: `⏰ ${timeHHMM}`, size: 'sm', color: '#666666' },
+          { type: 'text', text: `🚙 ${tripName}`, size: 'sm', color: '#666666' },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            color: '#10B981',
+            action: {
+              type: 'uri',
+              label: 'เปิดแผนที่',
+              uri: `https://liff.line.me/${LIFF_ID}?path=trip&id=${encodeURIComponent(tripId)}`,
+            },
+          },
+        ],
+      },
+    },
+  };
+}
+
 module.exports = {
   buildTripDetailFlex,
   buildSosFlex,
+  buildArrivalFlex,
 };

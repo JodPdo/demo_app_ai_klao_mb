@@ -230,7 +230,11 @@ describe("GET /api/mobile/trips/:id", () => {
 describe("POST /api/mobile/trips/:id/location", () => {
   test("201 -- inserts location, no destination so distanceKm is null", async () => {
     db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: null, dest_lng: null });
-    db.query.mockResolvedValueOnce({ rows: [{ id: 99 }] });
+    // INSERT now runs inside db.tx (Phase 6.5): q calls = member SELECT, INSERT
+    const q = jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] });
+    db.tx.mockImplementationOnce(async (fn) => fn(q));
 
     const res = await request(app)
       .post(`/api/mobile/trips/${TRIP_ID}/location`)
@@ -244,7 +248,10 @@ describe("POST /api/mobile/trips/:id/location", () => {
 
   test("201 -- calls getDistance when trip has destination", async () => {
     db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: 18.796, dest_lng: 98.993 });
-    db.query.mockResolvedValueOnce({ rows: [{ id: 100 }] });
+    const q = jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 100 }] });
+    db.tx.mockImplementationOnce(async (fn) => fn(q));
 
     const res = await request(app)
       .post(`/api/mobile/trips/${TRIP_ID}/location`)
@@ -297,7 +304,12 @@ describe("POST /api/mobile/trips/:id/location", () => {
 
   test("201 -- accuracy_m populated when client sends accuracy field", async () => {
     db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: null, dest_lng: null });
-    db.query.mockResolvedValueOnce({ rows: [{ id: 101 }] });
+    // q calls: member SELECT, INSERT, trip SELECT (checkArrival, no destination)
+    const q = jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 101 }] })
+      .mockResolvedValueOnce({ rows: [{ dest_lat: null, dest_lng: null, name: "T" }] });
+    db.tx.mockImplementationOnce(async (fn) => fn(q));
 
     const res = await request(app)
       .post(`/api/mobile/trips/${TRIP_ID}/location`)
@@ -306,10 +318,9 @@ describe("POST /api/mobile/trips/:id/location", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ ok: true, locationId: "101" });
-    expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining("accuracy_m"),
-      expect.arrayContaining([12.5]),
-    );
+    // INSERT is the 2nd q call — carries the accuracy_m column + the value 12.5
+    expect(q.mock.calls[1][0]).toContain("accuracy_m");
+    expect(q.mock.calls[1][1]).toContain(12.5);
   });
 });
 
@@ -692,5 +703,125 @@ describe("POST /api/mobile/trips/:id/sos/:sosId/cancel (Phase 6.2)", () => {
     const res = await request(app).post(`/api/mobile/trips/7/sos/42/cancel`).set(AUTH);
     expect(res.status).toBe(404);
     expect(res.body).toMatchObject({ code: "SOS_NOT_FOUND" });
+  });
+});
+
+// ---- Phase 6.5 — Arrival detection (POST /location side effect) ------------
+
+describe("Phase 6.5 — Arrival detection", () => {
+  const DEST = { dest_lat: 15.6, dest_lng: 103.4 };
+
+  // Build a tx whose `q` returns the given values in order, and capture q for assertions.
+  function txWith(...qReturns) {
+    const q = jest.fn();
+    qReturns.forEach((v) => q.mockResolvedValueOnce(v));
+    db.tx.mockImplementationOnce(async (fn) => fn(q));
+    return q;
+  }
+
+  const hasUpdateMembers = (q) => q.mock.calls.some((c) => /UPDATE members SET arrived_at/.test(c[0]));
+  const sosCall = (q) => q.mock.calls.find((c) => /UPDATE sos_events/.test(c[0]));
+
+  function post(body) {
+    return request(app).post("/api/mobile/trips/7/location").set(AUTH).send(body);
+  }
+
+  test("distance > 100m → no arrival", async () => {
+    getDistance.mockReturnValue(1.0); // 1000m
+    db.one.mockResolvedValueOnce({ id: 7, ...DEST });
+    const q = txWith(
+      { rows: [{ id: 20, arrived_at: null }] },                 // member
+      { rows: [{ id: 99 }] },                                   // insert
+      { rows: [{ ...DEST, name: "T" }] },                       // trip (checkArrival)
+    );
+    const res = await post({ lat: 1, lng: 1, accuracy: 12 });
+    expect(res.status).toBe(201);
+    expect(hasUpdateMembers(q)).toBe(false);
+  });
+
+  test("distance ≤ 100m AND accuracy ≤ 50m → arrived", async () => {
+    getDistance.mockReturnValue(0.05); // 50m
+    db.one.mockResolvedValueOnce({ id: 7, ...DEST });
+    const q = txWith(
+      { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [{ id: 99 }] },
+      { rows: [{ ...DEST, name: "T" }] },
+      { rows: [{ arrived_at: new Date().toISOString() }], rowCount: 1 }, // UPDATE members
+      { rows: [], rowCount: 0 },                                          // UPDATE sos (none)
+    );
+    const res = await post({ lat: 15.6, lng: 103.4, accuracy: 12 });
+    expect(res.status).toBe(201);
+    expect(hasUpdateMembers(q)).toBe(true);
+  });
+
+  test("GUARD — accuracy > 50m at distance 0 → no arrival", async () => {
+    getDistance.mockReturnValue(0.0);
+    db.one.mockResolvedValueOnce({ id: 7, ...DEST });
+    const q = txWith(
+      { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [{ id: 99 }] },
+    );
+    const res = await post({ lat: 15.6, lng: 103.4, accuracy: 80 });
+    expect(res.status).toBe(201);
+    expect(hasUpdateMembers(q)).toBe(false);
+    expect(q).toHaveBeenCalledTimes(2); // guard returns before trip SELECT
+  });
+
+  test("GUARD — accuracy null (omitted) → no arrival (fail-safe)", async () => {
+    getDistance.mockReturnValue(0.0);
+    db.one.mockResolvedValueOnce({ id: 7, ...DEST });
+    const q = txWith(
+      { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [{ id: 99 }] },
+    );
+    const res = await post({ lat: 15.6, lng: 103.4 }); // no accuracy field
+    expect(res.status).toBe(201);
+    expect(hasUpdateMembers(q)).toBe(false);
+    expect(q).toHaveBeenCalledTimes(2);
+  });
+
+  test("idempotent — member already arrived → no UPDATE, no SOS", async () => {
+    getDistance.mockReturnValue(0.005);
+    db.one.mockResolvedValueOnce({ id: 7, ...DEST });
+    const q = txWith(
+      { rows: [{ id: 20, arrived_at: new Date().toISOString() }] }, // already arrived
+      { rows: [{ id: 99 }] },
+    );
+    const res = await post({ lat: 15.6, lng: 103.4, accuracy: 12 });
+    expect(res.status).toBe(201);
+    expect(hasUpdateMembers(q)).toBe(false);
+    expect(sosCall(q)).toBeUndefined();
+    expect(q).toHaveBeenCalledTimes(2); // returns at already_arrived guard
+  });
+
+  test("auto-cancel SOS — active SOS cancelled when member arrives", async () => {
+    getDistance.mockReturnValue(0.005); // 5m
+    db.one.mockResolvedValueOnce({ id: 7, ...DEST });
+    const q = txWith(
+      { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [{ id: 99 }] },
+      { rows: [{ ...DEST, name: "T" }] },
+      { rows: [{ arrived_at: new Date().toISOString() }], rowCount: 1 },
+      { rows: [{ id: 42 }], rowCount: 1 }, // UPDATE sos — one cancelled
+    );
+    const res = await post({ lat: 15.6, lng: 103.4, accuracy: 10 });
+    expect(res.status).toBe(201);
+    const sos = sosCall(q);
+    expect(sos).toBeTruthy();
+    // params [userId, tripId] — cancelled_by/user_id = req.user.id ("1")
+    expect(sos[1][0]).toBe("1");
+  });
+
+  test("no destination → silent skip (F2 trip), response still 201", async () => {
+    getDistance.mockReturnValue(0.005);
+    db.one.mockResolvedValueOnce({ id: 7, dest_lat: null, dest_lng: null });
+    const q = txWith(
+      { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [{ id: 99 }] },
+      { rows: [{ dest_lat: null, dest_lng: null, name: "T" }] }, // trip — no destination
+    );
+    const res = await post({ lat: 15.6, lng: 103.4, accuracy: 12 });
+    expect(res.status).toBe(201);
+    expect(hasUpdateMembers(q)).toBe(false);
   });
 });
