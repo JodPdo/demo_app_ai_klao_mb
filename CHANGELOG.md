@@ -1,3 +1,8 @@
+## [0.1.27] - 2026-06-07
+
+### 🐛 Bug Fixes
+
+- *(routes)* Expose public-invite on /api/mobile/* path (reachable via api.aiklaotrip.com nginx proxy)
 ## [0.1.26] - 2026-06-07
 
 ### 🚀 Features

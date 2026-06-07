@@ -108,6 +108,7 @@ app.use("/api/mobile/trips", mobileTrips);
 // jwtAuth-guarded mobileMe mount below, or that guard would 401 these paths.
 app.use("/api/mobile", mobileInvite);
 app.use("/api/public", publicInvite);
+app.use("/api/mobile", publicInvite);   // expose public-invite GET on /api/mobile/* path (reachable via api.aiklaotrip.com nginx proxy to Node)
 app.use("/api/mobile", jwtAuth, mobileMe);
 
 /* =========================
