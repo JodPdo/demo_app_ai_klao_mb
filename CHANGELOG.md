@@ -1,3 +1,12 @@
+## [0.1.26] - 2026-06-07
+
+### 🚀 Features
+
+- *(invite)* Add invite-link endpoints + trip_invites table
+
+### ⚙️ Miscellaneous Tasks
+
+- *(security)* Remove hardcoded DB password fallback from lib/db.js
 ## [0.1.25] - 2026-06-05
 
 ### 🐛 Bug Fixes
