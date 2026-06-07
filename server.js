@@ -26,6 +26,7 @@ const oauthCallback = require("./routes/oauthCallback");
 const mobileMe = require("./routes/mobileMe");
 const mobileTrips = require("./routes/mobileTrips");
 const { mobileInvite, publicInvite } = require("./routes/mobileInvite");
+const liffInit = require("./routes/liffInit");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -109,15 +110,15 @@ app.use("/api/mobile/trips", mobileTrips);
 app.use("/api/mobile", mobileInvite);
 app.use("/api/public", publicInvite);
 app.use("/api/mobile", publicInvite);   // expose public-invite GET on /api/mobile/* path (reachable via api.aiklaotrip.com nginx proxy to Node)
+app.use("/api/mobile", liffInit);       // POST /api/mobile/init — establish aiklao_liff_session cookie same-origin (api.aiklaotrip.com → Node) for LIFF invite join
 app.use("/api/mobile", jwtAuth, mobileMe);
 
 /* =========================
    🔐 LIFF ROUTES (dualAuth inside router)
 ========================= */
 const liffConfig = require("./routes/liffConfig");
-const liffInit = require("./routes/liffInit");
 app.use("/api/liff", liffConfig);
-app.use("/api/liff", liffInit);
+app.use("/api/liff", liffInit);   // liffInit required at top (also mounted on /api/mobile above)
 
 /* =========================
    🔐 INTERNAL ROUTES (X-Internal-Secret header)
