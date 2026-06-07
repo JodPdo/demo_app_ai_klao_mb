@@ -1,3 +1,8 @@
+## [0.1.28] - 2026-06-07
+
+### 🐛 Bug Fixes
+
+- *(routes)* Expose liffInit on /api/mobile/init so LIFF page can set session cookie same-origin (api.aiklaotrip.com proxy)
 ## [0.1.27] - 2026-06-07
 
 ### 🐛 Bug Fixes
