@@ -25,6 +25,7 @@ const mobileAuth = require("./routes/mobileAuth");
 const oauthCallback = require("./routes/oauthCallback");
 const mobileMe = require("./routes/mobileMe");
 const mobileTrips = require("./routes/mobileTrips");
+const { mobileInvite, publicInvite } = require("./routes/mobileInvite");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -103,6 +104,10 @@ app.use("/api/mobile/oauth", oauthCallback);
    🔐 PROTECTED ROUTES
 ========================= */
 app.use("/api/mobile/trips", mobileTrips);
+// Invite routes — per-route auth inside the router. MUST precede the
+// jwtAuth-guarded mobileMe mount below, or that guard would 401 these paths.
+app.use("/api/mobile", mobileInvite);
+app.use("/api/public", publicInvite);
 app.use("/api/mobile", jwtAuth, mobileMe);
 
 /* =========================
