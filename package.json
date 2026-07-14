@@ -7,10 +7,10 @@
     "start": "node server.js",
     "dev": "NODE_ENV=development node server.js",
     "check": "node scripts/check-db.js",
+    "delete-user": "node scripts/delete-user.js",
     "richmenu:build": "node scripts/build-richmenu.js",
     "richmenu:setup": "node scripts/setup-richmenu.js",
     "richmenu:teardown": "node scripts/teardown-richmenu.js",
-    "migrate:from-sqlite": "node scripts/migrate-from-sqlite.js",
     "test": "jest",
     "test:coverage": "jest --coverage"
   },
