@@ -188,6 +188,57 @@ npm test
 
 ---
 
+## Handling a data-deletion request (PDPA)
+
+Our privacy policy promises that a user can request deletion of their account and
+personal data. There is **no public delete endpoint** — deletion is performed by an
+operator with the `scripts/delete-user.js` CLI, which removes a person's data across
+the shared PostgreSQL database (both backends). It is **dry-run by default** and
+requires an explicit `--confirm` flag to write anything.
+
+What it removes / preserves (see the script header for the full FK-verified map):
+
+- **Deletes:** the `users` row, their `members` (→ `locations` + `safety_alerts`
+  cascade), their `sos_events`, their web-login `aiklao_liff_sessions`, and any
+  `trip_invites` they created.
+- **Anonymises (keeps the row, nulls the reference):** `sos_events.cancelled_by`,
+  `user_roles.granted_by`, `share_tokens.created_by`, `audit_log.user_id`,
+  `content_sections.published_by/updated_by`.
+- **Trips:** never deletes a trip that still has other members. A trip left with
+  **zero** members after removal is deleted as an orphan.
+
+### Procedure
+
+```bash
+# 1. Verify the requester's identity and obtain their LINE user id (or numeric users.id).
+
+# 2. DRY RUN (default) — prints a per-table count of what WOULD change and the
+#    trip keep/delete list. Changes nothing.
+npm run delete-user -- --lineUserId=U0123456789abcdef
+#    or:  npm run delete-user -- --userId=42
+
+# 3. Review the dry-run output. Confirm the trip keep/delete list looks right.
+
+# 4. BACK UP THE DATABASE before any destructive run.
+pg_dump "$DATABASE_URL" > backup-before-delete-$(date +%F).sql
+
+# 5. EXECUTE — wraps everything in a single transaction (rolls back on any error).
+npm run delete-user -- --lineUserId=U0123456789abcdef --confirm
+
+# 6. Re-run the DRY RUN to confirm all counts are now 0.
+```
+
+Notes:
+- Run from the repo with a valid `DATABASE_URL` in the environment. **Do not run
+  against production without a fresh backup.**
+- The script refuses to run without `--lineUserId` or `--userId`, and never
+  auto-runs the destructive path (always needs `--confirm`).
+- `trips.cancelled_by`, `trips.group_break_started_by`, and
+  `members.emergency_contact_user_id` are free-text `line_user_id` audit columns
+  with **no FK**; they are intentionally left untouched (see script header).
+
+---
+
 ## Project Status
 
 - **Core backend, LIFF web app, share view, and CI/CD** — stable in production.
