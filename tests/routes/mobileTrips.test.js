@@ -230,9 +230,11 @@ describe("GET /api/mobile/trips/:id", () => {
 describe("POST /api/mobile/trips/:id/location", () => {
   test("201 -- inserts location, no destination so distanceKm is null", async () => {
     db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: null, dest_lng: null });
-    // INSERT now runs inside db.tx (Phase 6.5): q calls = member SELECT, INSERT
+    // INSERT now runs inside db.tx (Phase 6.5): q calls = member SELECT, last-location
+    // lookup (rate limit), INSERT
     const q = jest.fn()
       .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [] }) // no prior location -- rate limit check passes
       .mockResolvedValueOnce({ rows: [{ id: 99 }] });
     db.tx.mockImplementationOnce(async (fn) => fn(q));
 
@@ -250,6 +252,7 @@ describe("POST /api/mobile/trips/:id/location", () => {
     db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: 18.796, dest_lng: 98.993 });
     const q = jest.fn()
       .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [] }) // no prior location -- rate limit check passes
       .mockResolvedValueOnce({ rows: [{ id: 100 }] });
     db.tx.mockImplementationOnce(async (fn) => fn(q));
 
@@ -304,9 +307,10 @@ describe("POST /api/mobile/trips/:id/location", () => {
 
   test("201 -- accuracy_m populated when client sends accuracy field", async () => {
     db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: null, dest_lng: null });
-    // q calls: member SELECT, INSERT, trip SELECT (checkArrival, no destination)
+    // q calls: member SELECT, last-location lookup (rate limit), INSERT, trip SELECT (checkArrival, no destination)
     const q = jest.fn()
       .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [] }) // no prior location -- rate limit check passes
       .mockResolvedValueOnce({ rows: [{ id: 101 }] })
       .mockResolvedValueOnce({ rows: [{ dest_lat: null, dest_lng: null, name: "T" }] });
     db.tx.mockImplementationOnce(async (fn) => fn(q));
@@ -318,9 +322,48 @@ describe("POST /api/mobile/trips/:id/location", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ ok: true, locationId: "101" });
-    // INSERT is the 2nd q call — carries the accuracy_m column + the value 12.5
-    expect(q.mock.calls[1][0]).toContain("accuracy_m");
-    expect(q.mock.calls[1][1]).toContain(12.5);
+    // INSERT is the 3rd q call — carries the accuracy_m column + the value 12.5
+    expect(q.mock.calls[2][0]).toContain("accuracy_m");
+    expect(q.mock.calls[2][1]).toContain(12.5);
+  });
+
+  // ---- Rate limit (12s/member, mirrors Java LocationService.process) -------
+
+  test("429 -- rejected when last location was less than 12s ago", async () => {
+    db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: null, dest_lng: null });
+    const recentLoc = new Date(Date.now() - 5000).toISOString(); // 5s ago
+    const q = jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [{ created_at: recentLoc }] });
+    db.tx.mockImplementationOnce(async (fn) => fn(q));
+
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/location`)
+      .set(AUTH)
+      .send({ lat: 13.756, lng: 100.502 });
+
+    expect(res.status).toBe(429);
+    expect(res.body).toMatchObject({ error: "rate_limited" });
+    // Rejected before the INSERT ever runs -- only member + last-location lookup happened
+    expect(q).toHaveBeenCalledTimes(2);
+  });
+
+  test("201 -- proceeds when last location was more than 12s ago", async () => {
+    db.one.mockResolvedValueOnce({ id: TRIP_ID, dest_lat: null, dest_lng: null });
+    const oldLoc = new Date(Date.now() - 20000).toISOString(); // 20s ago
+    const q = jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 20, arrived_at: null }] })
+      .mockResolvedValueOnce({ rows: [{ created_at: oldLoc }] })
+      .mockResolvedValueOnce({ rows: [{ id: 102 }] });
+    db.tx.mockImplementationOnce(async (fn) => fn(q));
+
+    const res = await request(app)
+      .post(`/api/mobile/trips/${TRIP_ID}/location`)
+      .set(AUTH)
+      .send({ lat: 13.756, lng: 100.502 });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ ok: true, locationId: "102" });
   });
 });
 
@@ -731,6 +774,7 @@ describe("Phase 6.5 — Arrival detection", () => {
     db.one.mockResolvedValueOnce({ id: 7, ...DEST });
     const q = txWith(
       { rows: [{ id: 20, arrived_at: null }] },                 // member
+      { rows: [] },                                             // last-location lookup (rate limit)
       { rows: [{ id: 99 }] },                                   // insert
       { rows: [{ ...DEST, name: "T" }] },                       // trip (checkArrival)
     );
@@ -744,6 +788,7 @@ describe("Phase 6.5 — Arrival detection", () => {
     db.one.mockResolvedValueOnce({ id: 7, ...DEST });
     const q = txWith(
       { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [] },                                                       // last-location lookup (rate limit)
       { rows: [{ id: 99 }] },
       { rows: [{ ...DEST, name: "T" }] },
       { rows: [{ arrived_at: new Date().toISOString() }], rowCount: 1 }, // UPDATE members
@@ -759,12 +804,13 @@ describe("Phase 6.5 — Arrival detection", () => {
     db.one.mockResolvedValueOnce({ id: 7, ...DEST });
     const q = txWith(
       { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [] },        // last-location lookup (rate limit)
       { rows: [{ id: 99 }] },
     );
     const res = await post({ lat: 15.6, lng: 103.4, accuracy: 80 });
     expect(res.status).toBe(201);
     expect(hasUpdateMembers(q)).toBe(false);
-    expect(q).toHaveBeenCalledTimes(2); // guard returns before trip SELECT
+    expect(q).toHaveBeenCalledTimes(3); // guard returns before trip SELECT
   });
 
   test("GUARD — accuracy null (omitted) → no arrival (fail-safe)", async () => {
@@ -772,12 +818,13 @@ describe("Phase 6.5 — Arrival detection", () => {
     db.one.mockResolvedValueOnce({ id: 7, ...DEST });
     const q = txWith(
       { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [] },        // last-location lookup (rate limit)
       { rows: [{ id: 99 }] },
     );
     const res = await post({ lat: 15.6, lng: 103.4 }); // no accuracy field
     expect(res.status).toBe(201);
     expect(hasUpdateMembers(q)).toBe(false);
-    expect(q).toHaveBeenCalledTimes(2);
+    expect(q).toHaveBeenCalledTimes(3);
   });
 
   test("idempotent — member already arrived → no UPDATE, no SOS", async () => {
@@ -785,13 +832,14 @@ describe("Phase 6.5 — Arrival detection", () => {
     db.one.mockResolvedValueOnce({ id: 7, ...DEST });
     const q = txWith(
       { rows: [{ id: 20, arrived_at: new Date().toISOString() }] }, // already arrived
+      { rows: [] },        // last-location lookup (rate limit)
       { rows: [{ id: 99 }] },
     );
     const res = await post({ lat: 15.6, lng: 103.4, accuracy: 12 });
     expect(res.status).toBe(201);
     expect(hasUpdateMembers(q)).toBe(false);
     expect(sosCall(q)).toBeUndefined();
-    expect(q).toHaveBeenCalledTimes(2); // returns at already_arrived guard
+    expect(q).toHaveBeenCalledTimes(3); // returns at already_arrived guard
   });
 
   test("auto-cancel SOS — active SOS cancelled when member arrives", async () => {
@@ -799,6 +847,7 @@ describe("Phase 6.5 — Arrival detection", () => {
     db.one.mockResolvedValueOnce({ id: 7, ...DEST });
     const q = txWith(
       { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [] },        // last-location lookup (rate limit)
       { rows: [{ id: 99 }] },
       { rows: [{ ...DEST, name: "T" }] },
       { rows: [{ arrived_at: new Date().toISOString() }], rowCount: 1 },
@@ -817,6 +866,7 @@ describe("Phase 6.5 — Arrival detection", () => {
     db.one.mockResolvedValueOnce({ id: 7, dest_lat: null, dest_lng: null });
     const q = txWith(
       { rows: [{ id: 20, arrived_at: null }] },
+      { rows: [] },        // last-location lookup (rate limit)
       { rows: [{ id: 99 }] },
       { rows: [{ dest_lat: null, dest_lng: null, name: "T" }] }, // trip — no destination
     );
