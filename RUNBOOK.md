@@ -1,7 +1,13 @@
-# RUNBOOK.md — AiKlao Bot
+# RUNBOOK.md — AiKlao Mobile Backend (aiklao_mb)
 
 คู่มือ troubleshooting สำหรับ on-call / devops
 เมื่อระบบมีปัญหาให้ดูที่นี่ก่อน
+
+> **This runbook is for the Node mobile-API service (`aiklao_mb`, port 3002,
+> `/api/mobile/*` + `/api/liff/*`) only.** The LINE bot webhook, safety/scheduler
+> jobs, and SOS admin tooling live in the sibling Java Spring Boot service
+> (`demo_app_ai_klao_be`, PM2 process `aiklao_be`, port 3000) — that service has
+> its own runbook. Don't restart the wrong process by name.
 
 ---
 
@@ -15,17 +21,17 @@ curl https://your-domain.com/healthz
 pm2 status
 
 # Tail logs
-pm2 logs aiklao_be
+pm2 logs aiklao_mb
 
 # Restart (กรณีฉุกเฉิน)
-pm2 restart aiklao_be --update-env
+pm2 restart aiklao_mb --update-env
 ```
 
 ---
 
 ## Incident 1 — Service Down / 502 Bad Gateway
 
-**อาการ:** LIFF ไม่โหลด, LINE webhook ตอบไม่ได้, Nginx แสดง 502
+**อาการ:** Mobile app login ไม่ได้ (`/api/mobile/auth` ไม่ตอบ), LIFF page โหลด trip ไม่ขึ้น, Nginx แสดง 502
 
 **ตรวจสอบ:**
 
@@ -34,8 +40,8 @@ pm2 restart aiklao_be --update-env
 pm2 status
 # ถ้า status = errored หรือ stopped → restart
 
-pm2 restart aiklao_be --update-env
-pm2 logs aiklao_be --lines 50
+pm2 restart aiklao_mb --update-env
+pm2 logs aiklao_mb --lines 50
 ```
 
 **สาเหตุที่พบบ่อย:**
@@ -43,8 +49,8 @@ pm2 logs aiklao_be --lines 50
 | สาเหตุ | วิธีแก้ |
 |---|---|
 | Memory เกิน 512MB (PM2 auto-restart loop) | `pm2 logs` ดูว่า leak ที่ไหน, restart ก่อน |
-| PORT conflict | `lsof -i :3001` ดูว่ามี process อื่นใช้ port นี้ไหม |
-| Crash ตอน startup (env ผิด) | ตรวจ `.env` ว่าครบและถูกต้อง |
+| PORT conflict | `lsof -i :3002` ดูว่ามี process อื่นใช้ port นี้ไหม (Java backend ใช้ 3000, อย่าไปชนกัน) |
+| Crash ตอน startup (env ผิด) | ตรวจ `.env` ว่าครบและถูกต้อง — โดยเฉพาะ `DATABASE_URL`, `MOBILE_JWT_SECRET`, `MOBILE_LINE_CHANNEL_ID` (ขาดอันไหนแล้ว auth จะพังทั้งหมด แต่ server ยังบูตขึ้น) |
 | DB connection ล้มเหลว | ดู Incident 2 |
 
 ---
@@ -85,109 +91,58 @@ psql -U postgres -c "
     AND query_start < now() - interval '5 minutes';"
 
 # Restart app หลังแก้ DB
-pm2 restart aiklao_be --update-env
+pm2 restart aiklao_mb --update-env
 ```
 
 ---
 
 ## Incident 3 — LINE Webhook ไม่รับ Events
 
-**อาการ:** bot ไม่ตอบใน LINE, log ไม่มี webhook request เข้ามาเลย
-
-**ตรวจสอบ:**
-
-```bash
-# ทดสอบ webhook endpoint ตรงๆ
-curl -X POST https://your-domain.com/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-Line-Signature: test" \
-  -d '{"events":[],"destination":"Uxxxx"}'
-# ต้องได้ 200 เสมอ (LINE requires this)
-
-# ดู Nginx log
-tail -f /var/log/nginx/access.log | grep webhook
-```
-
-**สาเหตุที่พบบ่อย:**
-
-| สาเหตุ | วิธีแก้ |
-|---|---|
-| SSL cert หมดอายุ | `certbot renew` |
-| Webhook URL ผิดใน LINE Console | ตรวจสอบและแก้ใน LINE Developer Console |
-| `CHANNEL_SECRET` ผิด | อัป `.env` และ `pm2 restart --update-env` |
-| Server ไม่มี public IP | ตรวจ DNS หรือ firewall rule |
+**⚠️ ไม่ใช่ service นี้.** `aiklao_mb` (repo นี้) ไม่มี `/webhook` route เลย — ไม่มี
+`handlers/webhook.js`, ไม่มี LINE webhook handler ในโค้ดนี้อีกต่อไป. Webhook events
+ทั้งหมดถูกรับโดย Java backend (`demo_app_ai_klao_be`, PM2 process `aiklao_be`, port
+3000) — ถ้า bot ไม่ตอบใน LINE ให้ไปดู runbook ของ service นั้นแทน, ไม่ใช่ที่นี่.
 
 ---
 
 ## Incident 4 — Push Notification ไม่ส่ง
 
-**อาการ:** ไม่มี push notification เลย ทั้งที่เปิดอยู่
+**อาการ:** ไม่มี push notification เลย ทั้งที่เปิดอยู่ (SOS alert / arrival notice /
+invite push จาก mobile app)
 
-**ตรวจสอบ:**
-
-```bash
-# ดู push log ใน DB
-psql "$DATABASE_URL" -c "
-  SELECT status, count(*), max(pushed_at)
-  FROM push_log
-  WHERE pushed_at > now() - interval '24 hours'
-  GROUP BY status
-  ORDER BY count DESC;"
-```
-
-**ถ้า status = `skipped_stale`:**
+**หมายเหตุ:** `push_log` และ `quota_counter` (ตารางที่ query ด้านล่าง) เป็นตารางเก่า
+จาก schema เดิม (`migrations/001_initial.sql`) — โค้ดปัจจุบันใน repo นี้
+(`routes/mobileTrips.js`, `routes/lineNotify.js`) **ไม่ได้เขียนลงตารางเหล่านี้เลย**
+และไม่มี quota/`MONTHLY_PUSH_LIMIT` check ใดๆ ในโค้ดนี้ — ถ้าตารางนี้ยังถูกเขียนอยู่จริง
+แปลว่าเป็นฝั่ง Java backend ที่เขียน (shared DB). สำหรับ push ที่ยิงจาก `aiklao_mb`
+เอง ให้ดู log ของ service นี้โดยตรงแทน:
 
 ```bash
-# ตรวจโควตาเดือนนี้
-psql "$DATABASE_URL" -c "
-  SELECT ym, count
-  FROM quota_counter
-  WHERE ym = to_char(now(), 'YYYY-MM');"
+pm2 logs aiklao_mb | grep -i "\[sos\]\|\[arrival\]\|\[line-notify\]\|\[mobile-trips\]"
 ```
 
-โควตาหมด (≥ 200 ต่อเดือน) → รอเดือนหน้า หรือเพิ่ม `MONTHLY_PUSH_LIMIT` ใน `.env`
+`pushFlexToLine()` (`routes/mobileTrips.js`) และ `/api/internal/line-notify`
+(`routes/lineNotify.js`) ทั้งคู่ timeout ที่ 5s และ log ผ่าน `logger.warn`/`logger.error`
+เมื่อ push ล้มเหลว — ไม่มี retry, ไม่มี quota, best-effort เท่านั้น.
 
-**ถ้า status = `failed`:**
+**สาเหตุที่พบบ่อย:**
 
-```bash
-# ดู error message
-psql "$DATABASE_URL" -c "
-  SELECT error_message, count(*)
-  FROM push_log
-  WHERE status = 'failed'
-    AND pushed_at > now() - interval '24 hours'
-  GROUP BY error_message;"
-```
-
-LINE API 429 → rate limit, รอสักครู่  
-LINE API 401 → `CHANNEL_ACCESS_TOKEN` หมดอายุหรือผิด
+| สาเหตุ | วิธีแก้ |
+|---|---|
+| `CHANNEL_ACCESS_TOKEN` ไม่ได้ตั้งใน env | route จะ throw/503 ทันที — ตรวจ `.env` แล้ว `pm2 restart aiklao_mb --update-env` |
+| LINE API 429 | rate limit, รอสักครู่ |
+| LINE API 401 | `CHANNEL_ACCESS_TOKEN` หมดอายุหรือผิด |
+| Recipient ไม่มี `line_user_id` | ไม่ได้ push ให้คนนั้น (query กรอง `line_user_id IS NOT NULL`) — ตรวจสอบข้อมูล `members` |
 
 ---
 
 ## Incident 5 — Scheduler หยุดทำงาน
 
-**อาการ:** stale alert ไม่ส่ง, break ไม่หมดอายุอัตโนมัติ
-
-**ตรวจสอบ:**
-
-```bash
-# ดูว่า scheduler เริ่มทำงานไหม (ดูจาก log ตอน startup)
-pm2 logs aiklao_be | grep -i "scheduler\|cron"
-
-# ดู log ในช่วงที่ควรทำงาน (ทุก 5 นาที)
-pm2 logs aiklao_be --lines 200 | grep "checkStale\|checkBreak\|pushTrip"
-```
-
-**วิธีแก้:**
-
-```bash
-# Restart เพื่อให้ scheduler เริ่มใหม่
-pm2 restart aiklao_be --update-env
-
-# ตรวจว่า SCHEDULER_TICK ถูกต้อง
-grep SCHEDULER_TICK .env
-# ค่าเริ่มต้น: */5 * * * *
-```
+**⚠️ ไม่ใช่ service นี้.** `aiklao_mb` (repo นี้) ไม่มี scheduler/cron ใดๆ — ไม่มี
+`services/scheduler.js`, ไม่มี `node-cron` dependency ใน `package.json`, ไม่มี
+`SCHEDULER_TICK` env var ที่โค้ดนี้อ่าน. Stale-member alert และ break-expiry logic
+อยู่ที่ Java backend (`demo_app_ai_klao_be`) เท่านั้น — ถ้า stale alert หรือ break ไม่
+หมดอายุอัตโนมัติ ให้ไปดู runbook ของ service นั้นแทน.
 
 ---
 
@@ -200,17 +155,17 @@ grep SCHEDULER_TICK .env
 pm2 monit
 
 # ดู top processes
-top -p $(pm2 pid aiklao_be)
+top -p $(pm2 pid aiklao_mb)
 ```
 
 **วิธีแก้:**
 
 ```bash
 # Restart ฉุกเฉิน (zero-downtime)
-pm2 reload aiklao_be
+pm2 reload aiklao_mb
 
 # ถ้า reload ไม่ได้
-pm2 restart aiklao_be --update-env
+pm2 restart aiklao_mb --update-env
 ```
 
 PM2 จะ auto-restart เมื่อ memory เกิน 512MB อยู่แล้ว ถ้า restart บ่อยผิดปกติ
@@ -240,7 +195,7 @@ PM2 จะ auto-restart เมื่อ memory เกิน 512MB อยู่�
 
 ```bash
 ssh user@your-vps-ip
-/var/www/aiklao_be/deploy.sh
+/var/www/aiklao_mb/deploy.sh
 ```
 
 ---
@@ -248,7 +203,7 @@ ssh user@your-vps-ip
 ## Rollback
 
 ```bash
-cd /var/www/aiklao_be/demo_app_ai_klao_be
+cd /var/www/aiklao_mb/demo_app_ai_klao_mb
 
 # ดู commit ล่าสุด
 git log --oneline -5
@@ -256,7 +211,7 @@ git log --oneline -5
 # rollback ไป commit ก่อนหน้า
 git checkout <commit-hash>
 npm install --production
-pm2 reload aiklao_be --update-env
+pm2 reload aiklao_mb --update-env
 
 # ตรวจสอบ
 curl https://your-domain.com/healthz
@@ -284,7 +239,7 @@ psql "$DATABASE_URL" -c "
     AND (expires_at IS NULL OR expires_at > now())
   ORDER BY created_at DESC;"
 
-# Push quota เดือนนี้
+# Push quota เดือนนี้ (ตารางนี้ shared กับ Java backend — aiklao_mb เองไม่เขียน/เช็ค quota นี้)
 psql "$DATABASE_URL" -c "
   SELECT ym, count, 200 - count as remaining
   FROM quota_counter

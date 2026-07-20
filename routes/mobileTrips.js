@@ -23,6 +23,10 @@ const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
 const ARRIVAL_RADIUS_M = 100;   // within this distance of destination = arrived
 const MAX_ACCURACY_M = 50;      // skip arrival if GPS accuracy worse than this (or null)
 
+// Per-member location rate limit — mirrors the Java backend's
+// LocationService.process (12s minimum between updates per member).
+const LOCATION_MIN_INTERVAL_SEC = 12;
+
 // Push a single Flex message to one LINE user. Resolves on 2xx, rejects otherwise.
 // Mirrors routes/lineNotify.js (Phase 5.6 B+) — no shared lib helper exists.
 async function pushFlexToLine(lineUserId, flexMessage) {
@@ -423,6 +427,22 @@ router.post("/:id/location", jwtAuth, async (req, res) => {
       const member = memberRes.rows[0];
       if (!member) return { forbidden: true };
 
+      // Per-member rate limit: reject if this member's last location row is
+      // younger than LOCATION_MIN_INTERVAL_SEC. Mirrors the Java backend's
+      // LocationService.process check -- runs before any write, and before
+      // checkArrival, so a rate-limited request never touches the DB.
+      const lastLocRes = await q(
+        `SELECT created_at FROM locations WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [member.id]
+      );
+      const lastLoc = lastLocRes.rows[0];
+      if (lastLoc) {
+        const elapsedSec = (Date.now() - new Date(lastLoc.created_at).getTime()) / 1000;
+        if (elapsedSec < LOCATION_MIN_INTERVAL_SEC) {
+          return { rateLimited: true };
+        }
+      }
+
       // locations.trip_id is NOT NULL -- include explicitly.
       // source='mobile' distinguishes from LINE bot locations (default 'line')
       const ins = await q(
@@ -437,6 +457,7 @@ router.post("/:id/location", jwtAuth, async (req, res) => {
     });
 
     if (txResult.forbidden) return res.status(403).json({ error: "forbidden" });
+    if (txResult.rateLimited) return res.status(429).json({ error: "rate_limited" });
 
     res.status(201).json({ ok: true, locationId: String(txResult.locationId) });
 

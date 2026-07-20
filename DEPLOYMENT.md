@@ -1,6 +1,11 @@
-# DEPLOYMENT.md — AiKlao Bot
+# DEPLOYMENT.md — AiKlao Mobile Backend (aiklao_mb)
 
 คู่มือ deploy สำหรับ Production บน VPS + PM2 + GitHub Actions
+
+> This covers only the Node mobile-API service (`aiklao_mb`, port 3002). The
+> sibling Java Spring Boot service (`demo_app_ai_klao_be`, PM2 process
+> `aiklao_be`, port 3000 — LINE webhook, safety/scheduler, SOS admin) shares
+> the same Postgres DB but is deployed separately; it is not covered here.
 
 ---
 
@@ -11,9 +16,9 @@ Developer pushes to main
         ↓
 GitHub Actions (.github/workflows/deploy.yml)
         ↓
-SSH into VPS → run /var/www/aiklao_be/deploy.sh
+SSH into VPS → run /var/www/aiklao_mb/deploy.sh
         ↓
-PM2 reload aiklao_be (zero-downtime)
+PM2 reload aiklao_mb (zero-downtime)
 ```
 
 ---
@@ -33,10 +38,10 @@ PM2 reload aiklao_be (zero-downtime)
 ### 1. Clone Repository
 
 ```bash
-mkdir -p /var/www/aiklao_be
-cd /var/www/aiklao_be
-git clone https://github.com/torpeerapolthi/demo_app_ai_klao_be.git demo_app_ai_klao_be
-cd demo_app_ai_klao_be
+mkdir -p /var/www/aiklao_mb
+cd /var/www/aiklao_mb
+git clone git@github.com:JodPdo/demo_app_ai_klao_mb.git demo_app_ai_klao_mb
+cd demo_app_ai_klao_mb
 npm install --production
 ```
 
@@ -57,21 +62,26 @@ cp .env.example .env   # ถ้ามี
 nano .env
 ```
 
-ใส่ค่าทั้งหมด (ดูรายการใน README.md):
+ใส่ค่าทั้งหมด (รายการเต็มดู `CLAUDE.md` → Environment Variables; ตัวแปรที่จำเป็นต่อ auth/push):
 
 ```env
 DATABASE_URL=postgresql://aiklao_user:your-strong-password@localhost:5432/aiklao_db
-CHANNEL_SECRET=...
+MOBILE_JWT_SECRET=...
+MOBILE_LINE_CHANNEL_ID=...
 CHANNEL_ACCESS_TOKEN=...
+INTERNAL_SECRET=...
 LINE_LOGIN_CHANNEL_ID=...
 LIFF_ID=...
-PORT=3001
+PORT=3002
 NODE_ENV=production
 PG_SSL=false
-MONTHLY_PUSH_LIMIT=200
+ALLOWED_ORIGINS=https://mb.aiklaotrip.com
 ```
 
-> **สำคัญ:** ไม่ commit `.env` เข้า git เด็ดขาด — มีใน .gitignore แล้ว
+> **สำคัญ:** ไม่ commit `.env` เข้า git เด็ดขาด — มีใน .gitignore แล้ว. ถ้าลืมตั้ง
+> `MOBILE_JWT_SECRET` หรือ `MOBILE_LINE_CHANNEL_ID` server จะยังบูตขึ้นได้ปกติ แต่ทุก
+> mobile-auth request จะ 500 (`server_misconfigured`) — เช็ค `pm2 logs aiklao_mb`
+> หลัง deploy ทุกครั้งว่าไม่มี warning `MOBILE_JWT_SECRET not set`.
 
 ### 4. Start with PM2
 
@@ -85,13 +95,13 @@ pm2 startup                   # auto-start เมื่อ VPS reboot
 
 ```bash
 pm2 status
-curl http://localhost:3001/healthz
-# {"ok":true}
+curl http://localhost:3002/healthz
+# {"ok":true,"service":"aiklao_mb","version":"0.1.28"}
 ```
 
 ### 5. Nginx Reverse Proxy
 
-สร้างไฟล์ `/etc/nginx/sites-available/aiklao_be`:
+สร้างไฟล์ `/etc/nginx/sites-available/aiklao_mb`:
 
 ```nginx
 server {
@@ -99,7 +109,7 @@ server {
     server_name your-domain.com;
 
     location / {
-        proxy_pass http://localhost:3001;
+        proxy_pass http://localhost:3002;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -113,7 +123,7 @@ server {
 ```
 
 ```bash
-ln -s /etc/nginx/sites-available/aiklao_be /etc/nginx/sites-enabled/
+ln -s /etc/nginx/sites-available/aiklao_mb /etc/nginx/sites-enabled/
 nginx -t
 systemctl reload nginx
 ```
@@ -129,27 +139,28 @@ Certbot จะ auto-renew ทุก 90 วัน
 
 ### 7. Create Deploy Script
 
-สร้างไฟล์ `/var/www/aiklao_be/deploy.sh`:
+สร้างไฟล์ `/var/www/aiklao_mb/deploy.sh` (path นี้ตรงกับที่ `.github/workflows/deploy.yml`
+เรียกจริง):
 
 ```bash
 #!/bin/bash
 set -e
 
-APP_DIR="/var/www/aiklao_be/demo_app_ai_klao_be"
+APP_DIR="/var/www/aiklao_mb/demo_app_ai_klao_mb"
 
-echo "=== AiKlao Deploy $(date) ==="
+echo "=== AiKlao MB Deploy $(date) ==="
 cd "$APP_DIR"
 
 git pull origin main
 npm install --production
-pm2 reload aiklao_be --update-env
+pm2 reload aiklao_mb --update-env
 
 echo "=== Deploy complete ==="
-pm2 status aiklao_be
+pm2 status aiklao_mb
 ```
 
 ```bash
-chmod +x /var/www/aiklao_be/deploy.sh
+chmod +x /var/www/aiklao_mb/deploy.sh
 ```
 
 ---
@@ -191,34 +202,34 @@ cat ~/.ssh/aiklao_deploy
 git push origin main
 
 # Manual (บน VPS):
-/var/www/aiklao_be/deploy.sh
+/var/www/aiklao_mb/deploy.sh
 ```
 
 ### PM2 Commands
 
 ```bash
 pm2 status                          # ดู process ทั้งหมด
-pm2 logs aiklao_be                  # ดู logs แบบ tail
-pm2 logs aiklao_be --lines 100      # ดู 100 บรรทัดล่าสุด
-pm2 reload aiklao_be                # reload (zero-downtime)
-pm2 restart aiklao_be --update-env  # restart + อัป env vars
-pm2 stop aiklao_be                  # หยุด
-pm2 delete aiklao_be                # ลบออกจาก PM2
+pm2 logs aiklao_mb                  # ดู logs แบบ tail
+pm2 logs aiklao_mb --lines 100      # ดู 100 บรรทัดล่าสุด
+pm2 reload aiklao_mb                # reload (zero-downtime)
+pm2 restart aiklao_mb --update-env  # restart + อัป env vars
+pm2 stop aiklao_mb                  # หยุด
+pm2 delete aiklao_mb                # ลบออกจาก PM2
 ```
 
 ### Log Files
 
 ```
-/root/.pm2/logs/aiklao-be-out.log    # stdout
-/root/.pm2/logs/aiklao-be-error.log  # stderr
+/root/.pm2/logs/aiklao-mb-out.log    # stdout
+/root/.pm2/logs/aiklao-mb-error.log  # stderr
 ```
 
 ```bash
 # ดู error ล่าสุด
-tail -f /root/.pm2/logs/aiklao-be-error.log
+tail -f /root/.pm2/logs/aiklao-mb-error.log
 
 # ดู logs ของวันนี้
-grep "$(date +%Y-%m-%d)" /root/.pm2/logs/aiklao-be-out.log
+grep "$(date +%Y-%m-%d)" /root/.pm2/logs/aiklao-mb-out.log
 ```
 
 ---
@@ -228,7 +239,7 @@ grep "$(date +%Y-%m-%d)" /root/.pm2/logs/aiklao-be-out.log
 ถ้า deploy แล้วมีปัญหา:
 
 ```bash
-cd /var/www/aiklao_be/demo_app_ai_klao_be
+cd /var/www/aiklao_mb/demo_app_ai_klao_mb
 
 # ดู commit history
 git log --oneline -10
@@ -236,7 +247,7 @@ git log --oneline -10
 # rollback ไป commit ก่อนหน้า
 git checkout <previous-commit-hash>
 npm install --production
-pm2 reload aiklao_be --update-env
+pm2 reload aiklao_mb --update-env
 ```
 
 ---
@@ -246,10 +257,10 @@ pm2 reload aiklao_be --update-env
 ถ้าต้องเปลี่ยน env var บน production:
 
 ```bash
-nano /var/www/aiklao_be/demo_app_ai_klao_be/.env
+nano /var/www/aiklao_mb/demo_app_ai_klao_mb/.env
 # แก้ไขค่าที่ต้องการ
 
-pm2 restart aiklao_be --update-env
+pm2 restart aiklao_mb --update-env
 ```
 
 ---
@@ -291,19 +302,20 @@ curl https://your-domain.com/healthz
 
 ## LINE Webhook Config
 
-หลัง deploy ให้ตรวจสอบว่า webhook URL ถูกตั้งใน LINE Developer Console:
+**⚠️ Not applicable to `aiklao_mb`.** This service has no `/webhook` route — there is
+no LINE webhook handler in this repo (`routes/` only exposes `/api/mobile/*`,
+`/api/liff/*`, `/api/public/*`, and `/api/internal/line-notify`). The LINE webhook
+is configured against the Java backend (`demo_app_ai_klao_be`, port 3000) — see
+that service's own deployment doc for its webhook URL / signature verification.
 
-```
-https://your-domain.com/webhook
-```
-
-ทดสอบ:
+After deploying `aiklao_mb`, the equivalent smoke test is the health check and a
+login round-trip:
 
 ```bash
-# ตรวจ signature verification
-curl -X POST https://your-domain.com/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-Line-Signature: invalid" \
-  -d '{"events":[]}'
-# ควรได้ 200 (LINE requires 200 always)
+curl https://your-domain.com/healthz
+# {"ok":true,"service":"aiklao_mb","version":"0.1.28"}
+
+# POST /api/mobile/auth with a real LINE id_token should return a JWT;
+# with a missing/invalid one it should 400/401, never 500 ("server_misconfigured"
+# means MOBILE_JWT_SECRET or MOBILE_LINE_CHANNEL_ID is missing from env).
 ```

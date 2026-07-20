@@ -25,19 +25,21 @@ services:
     environment:
       DATABASE_URL: postgres://aiklao:${POSTGRES_PASSWORD:-aiklao_dev_change_me}@postgres:5432/aiklao
       NODE_ENV: production
-      PORT: 3001
+      PORT: 3002
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      TIMEZONE: ${TIMEZONE:-Asia/Bangkok}
-      MONTHLY_PUSH_LIMIT: ${MONTHLY_PUSH_LIMIT:-200}
-      SCHEDULER_TICK: ${SCHEDULER_TICK:-*/5 * * * *}
-      CHANNEL_SECRET: ${CHANNEL_SECRET}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      PG_SSL: ${PG_SSL:-false}
+      SLOW_QUERY_MS: ${SLOW_QUERY_MS:-300}
       CHANNEL_ACCESS_TOKEN: ${CHANNEL_ACCESS_TOKEN}
+      MOBILE_JWT_SECRET: ${MOBILE_JWT_SECRET}
+      MOBILE_LINE_CHANNEL_ID: ${MOBILE_LINE_CHANNEL_ID}
+      LINE_LOGIN_CHANNEL_ID: ${LINE_LOGIN_CHANNEL_ID}
       LIFF_ID: ${LIFF_ID}
       LIFF_URL: ${LIFF_URL}
-      LINE_LOGIN_CHANNEL_ID: ${LINE_LOGIN_CHANNEL_ID}
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
     ports:
-      - "${APP_PORT:-3001}:3001"
+      - "${APP_PORT:-3002}:3002"
 
 volumes:
   postgres-data:

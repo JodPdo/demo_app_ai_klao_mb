@@ -1,5 +1,17 @@
 # AiKlao — Real-Time Group Trip-Tracking Platform
 
+> # ⚠️ ARCHIVED — superseded by `demo_app_ai_klao_be` v0.2.19, cutover 2026-07-20, kept for reference
+>
+> This Node/Express mobile-API backend has been **retired**. Its entire `/api/mobile/*` surface was
+> ported byte-for-byte to the Java Spring Boot backend **`demo_app_ai_klao_be`**, and the production
+> nginx cutover moved live mobile traffic off this service (`:3002 → :3000`) on **2026-07-20**. The
+> process is `pm2 stop`ped on the VPS (retained only as a rollback lever) and the CI deploy workflow
+> has been removed so a push to `main` can no longer redeploy it.
+>
+> **Do not build new features here.** All mobile-API work now happens on the Java backend. This repo
+> is kept solely as a reference for the original Node implementation and its git history. Final state
+> tagged `archived-2026-07-20`. The description below documents the service *as it ran while live*.
+
 AiKlao is a real-time location-tracking platform that helps groups travelling together stay
 aware of one another. It runs in production across three clients — a **LINE chat bot**, a
 **LIFF web app** with a live map, and a **React Native mobile app** — on a shared
@@ -185,6 +197,57 @@ blocks deployment if any test fails.
 ```bash
 npm test
 ```
+
+---
+
+## Handling a data-deletion request (PDPA)
+
+Our privacy policy promises that a user can request deletion of their account and
+personal data. There is **no public delete endpoint** — deletion is performed by an
+operator with the `scripts/delete-user.js` CLI, which removes a person's data across
+the shared PostgreSQL database (both backends). It is **dry-run by default** and
+requires an explicit `--confirm` flag to write anything.
+
+What it removes / preserves (see the script header for the full FK-verified map):
+
+- **Deletes:** the `users` row, their `members` (→ `locations` + `safety_alerts`
+  cascade), their `sos_events`, their web-login `aiklao_liff_sessions`, and any
+  `trip_invites` they created.
+- **Anonymises (keeps the row, nulls the reference):** `sos_events.cancelled_by`,
+  `user_roles.granted_by`, `share_tokens.created_by`, `audit_log.user_id`,
+  `content_sections.published_by/updated_by`.
+- **Trips:** never deletes a trip that still has other members. A trip left with
+  **zero** members after removal is deleted as an orphan.
+
+### Procedure
+
+```bash
+# 1. Verify the requester's identity and obtain their LINE user id (or numeric users.id).
+
+# 2. DRY RUN (default) — prints a per-table count of what WOULD change and the
+#    trip keep/delete list. Changes nothing.
+npm run delete-user -- --lineUserId=U0123456789abcdef
+#    or:  npm run delete-user -- --userId=42
+
+# 3. Review the dry-run output. Confirm the trip keep/delete list looks right.
+
+# 4. BACK UP THE DATABASE before any destructive run.
+pg_dump "$DATABASE_URL" > backup-before-delete-$(date +%F).sql
+
+# 5. EXECUTE — wraps everything in a single transaction (rolls back on any error).
+npm run delete-user -- --lineUserId=U0123456789abcdef --confirm
+
+# 6. Re-run the DRY RUN to confirm all counts are now 0.
+```
+
+Notes:
+- Run from the repo with a valid `DATABASE_URL` in the environment. **Do not run
+  against production without a fresh backup.**
+- The script refuses to run without `--lineUserId` or `--userId`, and never
+  auto-runs the destructive path (always needs `--confirm`).
+- `trips.cancelled_by`, `trips.group_break_started_by`, and
+  `members.emergency_contact_user_id` are free-text `line_user_id` audit columns
+  with **no FK**; they are intentionally left untouched (see script header).
 
 ---
 
