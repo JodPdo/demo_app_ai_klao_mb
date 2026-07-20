@@ -1,5 +1,14 @@
 # AiKlao Mobile Backend (aiklao_mb) — Claude Code Context
 
+> # ⚠️ ARCHIVED / SUPERSEDED — do not develop here
+> **Superseded by `demo_app_ai_klao_be` v0.2.19, cutover 2026-07-20, kept for reference.**
+> The entire `/api/mobile/*` surface was ported byte-for-byte to the Java backend (Track A2) and the
+> A4 nginx cutover moved live traffic `:3002 → :3000` on 2026-07-20. This process is `pm2 stop`ped
+> (kept only as a rollback lever). **All new mobile-API work happens on the Java backend, not here.**
+> This repo is retained as reference for the original Node implementation and its git history; the CI
+> deploy workflow has been removed so a push to `main` cannot redeploy it. The description below
+> documents the service *as it was* while live — treat it as historical.
+
 ## Project Overview
 
 Mobile-API-only REST backend for AiKlao's real-time group trip tracking, built on Node.js 20 / Express 5 / PostgreSQL.

@@ -1,5 +1,17 @@
 # AiKlao — Real-Time Group Trip-Tracking Platform
 
+> # ⚠️ ARCHIVED — superseded by `demo_app_ai_klao_be` v0.2.19, cutover 2026-07-20, kept for reference
+>
+> This Node/Express mobile-API backend has been **retired**. Its entire `/api/mobile/*` surface was
+> ported byte-for-byte to the Java Spring Boot backend **`demo_app_ai_klao_be`**, and the production
+> nginx cutover moved live mobile traffic off this service (`:3002 → :3000`) on **2026-07-20**. The
+> process is `pm2 stop`ped on the VPS (retained only as a rollback lever) and the CI deploy workflow
+> has been removed so a push to `main` can no longer redeploy it.
+>
+> **Do not build new features here.** All mobile-API work now happens on the Java backend. This repo
+> is kept solely as a reference for the original Node implementation and its git history. Final state
+> tagged `archived-2026-07-20`. The description below documents the service *as it ran while live*.
+
 AiKlao is a real-time location-tracking platform that helps groups travelling together stay
 aware of one another. It runs in production across three clients — a **LINE chat bot**, a
 **LIFF web app** with a live map, and a **React Native mobile app** — on a shared
